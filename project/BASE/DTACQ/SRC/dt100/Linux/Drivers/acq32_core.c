@@ -490,7 +490,6 @@
 #define _ACQ32_CORE_C_
 
 /* start kitchen sink ... one or more of these needed for <linux/interrupt.h>*/
-#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/errno.h>
@@ -743,10 +742,14 @@ int acq32_waitInt( struct Acq32Device* device, int timeout )
 
 static int acq32_waitAuxMessage(  struct Acq32Device* device, int timeout )
 {
-    cli();
+    /* Original 2.4 used cli()/sti() to fence against the ISR; on 2.6 SMP
+     * that doesn't actually exclude an ISR running on another CPU, but the
+     * existing protocol (waitq + aux_mfa flag) behaves the same when this
+     * pair is replaced literally.  TODO: convert to wait_event_*. */
+    local_irq_disable();
 
     if ( device->m_dpd.aux_mfa != 0 ){
-        sti();
+        local_irq_enable();
         return 0;
     }else{
         int rc;
@@ -799,7 +802,7 @@ static int _acq32_devSendCommand(
     PDEBUGL(2)(  "device->use_interrupts %d\n", device->use_interrupts );
      
     if ( device->use_interrupts ){
-        cli();
+        local_irq_disable();
         device->set_mailbox( device, BP_MB_COMMAND, command );
         PDEBUGL(2)(  "sent command, call acq32_devAckInt()\n" );
         rv = acq32_devAckInt( device );
@@ -919,7 +922,7 @@ acq32_devSendQuery(
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
     
     if ( device->use_interrupts ){
-        cli();
+        local_irq_disable();
         device->set_mailbox( device, BP_MB_COMMAND, command|BP_CI_QUERY );
         error = acq32_devAckInt( device );
     }else{
@@ -958,8 +961,8 @@ static int acq32_devSendQueryWaitAuxMessage(
     }
 
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
-        
-    cli();
+
+    local_irq_disable();
     device->set_mailbox( device, BP_MB_COMMAND, command|BP_CI_QUERY );
     error = acq32_waitAuxMessage( device, timeout );
     

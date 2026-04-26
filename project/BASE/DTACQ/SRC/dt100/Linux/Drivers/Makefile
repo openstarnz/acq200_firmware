@@ -1,66 +1,77 @@
-# Comment/uncomment the following line to disable/enable debugging
-DEBUG = n
+# Drivers/Makefile - kbuild-style build for Linux 2.6.32+ (CentOS 6)
+#
+# Builds two kernel modules:
+#   acq32-drv.ko  - ACQ32/ACQ196 PCI DAQ
+#   acq200-drv.ko - ACQ200 bridge + DAQ
+#
+# Plus userspace tools: reset-driver, acq32_debug, acqcmd, irq, acq2sh
+#
+# Usage:
+#   make           - build modules + userspace apps
+#   make modules   - build kernel modules only
+#   make apps      - build userspace tools only
+#   make clean
+#
+# Override KDIR if not building against the running kernel:
+#   make KDIR=/usr/src/kernels/2.6.32-754.el6.x86_64
 
-# Kernel headers:
-# This assumes that kernel sources install to convention:
-# /usr/src/linux-2.4.20-8/include
-# If this directory doesn't exist, we recommend setting it up via a soft link
+ifneq ($(KERNELRELEASE),)
+# ============================================================
+# kbuild context (invoked by the kernel's top-level Makefile)
+# ============================================================
 
-INCLUDEDIR = "/usr/src/linux-`uname -r`/include"
-#INCLUDEDIR = "/usr/src/linux-2.4.20-8/include"
+obj-m += acq32-drv.o
+obj-m += acq200-drv.o
 
-ifeq ($(DEBUG),y)
-  DEBFLAGS = -O -g -DPGM_DEBUG # "-O" is needed to expand inlines
+ccflags-y := \
+	-I$(src)/../../../include \
+	-I$(src)/../include \
+	-I$(src)/../../include \
+	-DLINUX_NEW_PCI
+
+# Files shared between both modules (compiled identically — no per-module defines)
+acq32_shared_objs := \
+	acq32_core.o \
+	acq32_simul.o \
+	acq32_utils.o \
+	acq32_command.o \
+	acq32_fungen.o \
+	acq200_bigbuf_alloc.o \
+	debug.o \
+	strtol.o
+
+acq32-drv-y := $(acq32_shared_objs) acq32_mmap.o acq32.o acq32_specific.o
+
+acq200-drv-y := $(acq32_shared_objs) acq200_module.o acq200.o wavegen.o
+
+# acq200_module.c is a thin wrapper that #includes acq32.c with -DACQ200.
+# Only this object needs the define; the rest of the shared sources have no
+# ACQ200 conditionals (verified at port time).
+CFLAGS_acq200_module.o := -DACQ200
+
 else
-  DEBFLAGS = -O2
-endif
+# ============================================================
+# user-invocation context
+# ============================================================
 
-CFLAGS = -D__KERNEL__ -Wall $(DEBFLAGS) -DLINUX_NEW_PCI
+KDIR ?= /lib/modules/$(shell uname -r)/build
+PWD  := $(shell pwd)
 
-DTACQ_INCLUDES		= ../../../include
-DT100_INCLUDES		= ../../include
-DTACQ_LINUX_INCLUDES	= ../include
-
-CFLAGS += \
-	-I$(INCLUDEDIR) \
-	-I$(DTACQ_INCLUDES) \
-	-I$(DTACQ_LINUX_INCLUDES) \
-	-I$(DT100_INCLUDES) \
-
-# Extract version number from headers.
-VER = $(shell awk -F\" '/REL/ {print $$2}' $(INCLUDEDIR)/linux/version.h)
-
-TARGET = acq32-drv
-OBJS = $(TARGET).o 
-SRC = \
-	acq32_core.c \
-	acq32_simul.c \
-	acq32_utils.c \
-	acq32_command.c \
-	acq32_fungen.c \
-	acq200_bigbuf_alloc.c \
-	debug.c \
-	strtol.c 
-
-ACQ200SRC = \
-	$(SRC) \
-	acq200_module.c \
-	acq200.c \
-	wavegen.c \
-
-ACQ32SRC = \
-	$(SRC) \
-	acq32_mmap.c \
-	acq32.c \
-	acq32_specific.c
-
-DTLBIN= ../bin
-MODULES=../modules
+# Userspace apps — plain C, no kernel headers
+APP_CFLAGS := -O2 -Wall \
+	-I../../../include \
+	-I../include \
+	-I../../include
+APP_LDLIBS_POPT := -lpopt
 
 APPS = reset-driver acq32_debug acqcmd irq acq2sh
+
+DTLBIN  = ../bin
+MODULES = ../modules
+
 MODS = \
-	acq32-drv.o \
-	acq200-drv.o \
+	acq32-drv.ko \
+	acq200-drv.ko \
 	acq32-mknod.pl \
 	acq32.load \
 	acq200.load \
@@ -68,79 +79,44 @@ MODS = \
 	getBoards.pm \
 	acq32-init.pl
 
-DC := $(shell date +%y%m%d%H%M)
+.PHONY: all modules modules_install apps clean install release
 
-#all: .depend $(TARGET).o $(APPS)
-all: .depend acq32-drv.o acq200-drv.o $(APPS)
+all: modules apps
 
-release install: all
-	@-mkdir $DTLBIN
+modules:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+modules_install:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
+
+apps: $(APPS)
+
+reset-driver: reset-driver.c
+	$(CC) $(APP_CFLAGS) -o $@ $< $(APP_LDLIBS_POPT)
+
+acqcmd: acqcmd.c
+	$(CC) $(APP_CFLAGS) -o $@ $< $(APP_LDLIBS_POPT)
+
+acq2sh: acq2sh.c
+	$(CC) $(APP_CFLAGS) -o $@ $< $(APP_LDLIBS_POPT)
+
+acq32_debug: acq32_debug.c
+	$(CC) $(APP_CFLAGS) -o $@ $<
+
+irq: irq.c
+	$(CC) $(APP_CFLAGS) -o $@ $<
+
+bigread: bigread.c
+	$(CC) $(APP_CFLAGS) -o $@ $< $(APP_LDLIBS_POPT)
+
+install release: all
+	@mkdir -p $(DTLBIN) $(MODULES)
 	cp $(APPS) $(DTLBIN)
-	@-mkdir $(MODULES)
 	cp $(MODS) $(MODULES)
-	echo $(VER) >../linux_version
-
-
-#$(TARGET).o: $(SRC:.c=.o)
-#	$(LD) -o $@ -r $^
-
-acq32-drv.o: $(ACQ32SRC:.c=.o)
-	$(LD) -o $@ -r $^
-
-acq200-drv.o: $(ACQ200SRC:.c=.o)
-	$(LD) -o $@ -r $^
-
-reset-driver : reset-driver.o
-	$(CC) -o $@ $^ -lpopt -lc
-
-acqcmd: acqcmd.o
-	$(CC) -o $@ $^ -lpopt -lc
-
-bigread: bigread.o
-	$(CC) -o $@ $^ -lpopt -lc
-
-acq2sh: acq2sh.o
-	$(CC) -o $@ $^ -lpopt -lc
-
-
-
-install_direct:
-	mkdir -p /lib/modules/$(VER)/misc /lib/modules/misc
-	install -c $(TARGET).o /lib/modules/$(VER)/misc
-	install -c $(TARGET).o /lib/modules/misc
-
 
 clean:
-	rm -f $(APPS)
-	rm -f *.o *~ core .depend
+	-$(MAKE) -C $(KDIR) M=$(PWD) clean
+	rm -f $(APPS) bigread *.o *.ko *.mod.c *.mod.o *.symvers *.order *~ core .depend
+	rm -rf .tmp_versions
 
-depend .depend dep:
-	$(CC) $(CFLAGS) -MM *.c > .depend
-
-
-copy: $(SRC:.c=.o)
-	echo copy $^
-
-
-gat-errors:
-	cat make.log
-
-PACKAGE_FILES=*.[ch] Makefile *.load *.pl
-
-package:
-	tar cvzf acq32-drv.$(DC).tgz $(PACKAGE_FILES)
-	cvs tag acq32_drv_$(DC)
-	echo package acq32-drv.$(DC).tgz created
-
-ifeq (.depend,$(wildcard .depend))
-include .depend
 endif
-
-
-
-
-
-
-
-
-

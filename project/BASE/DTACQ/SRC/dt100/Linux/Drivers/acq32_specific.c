@@ -330,11 +330,8 @@ int acq32_mmap_rom( struct file* filp, struct vm_area_struct* vma )
         return -EINVAL;                         /* spans too high */
     }
 #endif    
-    return remap_page_range( 
-#ifdef RH9
-	    vma,
-#endif
-        vma->vm_start, physical, vsize, vma->vm_page_prot 
+    return remap_pfn_range(
+        vma, vma->vm_start, physical >> PAGE_SHIFT, vsize, vma->vm_page_prot
         );
 }
 
@@ -384,12 +381,9 @@ int acq32_mmap( struct file* filp, struct vm_area_struct* vma )
 #endif
 #endif
 
-        if ( remap_page_range( 
-#ifdef RH9
-		               vma,
-#endif
-			       vma->vm_start, 
-                               physical, vsize, vma->vm_page_prot ) ){
+        if ( remap_pfn_range(
+                vma, vma->vm_start,
+                physical >> PAGE_SHIFT, vsize, vma->vm_page_prot ) ){
             return -EAGAIN;
         }else{
 #ifdef PGMCOMOUT // Rubini does this p277 ??
@@ -490,7 +484,7 @@ static void _acq32_incoming_i2o_isr( struct Acq32Device* device )
 
 #define SIGNATURE_21285 0x0000ffff
 
-static void acq32_isr( int irq, void* dev_id, struct pt_regs* regs )
+static irqreturn_t acq32_isr( int irq, void* dev_id )
 {
 	struct Acq32Device* device = (struct Acq32Device*)dev_id;
 	unsigned status;
@@ -499,17 +493,17 @@ static void acq32_isr( int irq, void* dev_id, struct pt_regs* regs )
 	PDEBUGL(4)(  "acq32_isr device %p\n", device );
 
 	status = readl(CSR(device, PCI_OUT_INT_STATUS));
-  
+
 	if ( status != 0 ) {
 
 		PDEBUGL(3)( "\n" );
 
-		if ( (status&PCI_OUT_INT_STATUS_OUTPOST) != 0 ){  
+		if ( (status&PCI_OUT_INT_STATUS_OUTPOST) != 0 ){
 /* OUTBOUND data packet(s) .. Q it, start BH */
 			_acq32_incoming_i2o_isr( device );
 		}else if ( (status&PCI_OUT_INT_STATUS_DOORBELL) != 0 ){
 			unsigned doorbell = readl( CSR( device, DOORBELL ) );
-			
+
 			acq32_devGetStatus( device, NULL );
 			writel( doorbell, CSR( device, DOORBELL) );
 
@@ -519,8 +513,11 @@ static void acq32_isr( int irq, void* dev_id, struct pt_regs* regs )
 			acq32_doorbell_isr( device, doorbell );
 		}else{
 			PDEBUGL(2)( " baffled by PCI_OUT_INT_STATUS 0x%08x\n", status );
+			return IRQ_NONE;
 		}
+		return IRQ_HANDLED;
 	}
+	return IRQ_NONE;
 }
 
 
@@ -610,20 +607,23 @@ void acq32_enable_rom( struct Acq32Device* device, int enable )
     PDEBUGL(2)( " setting PCI_ROM_ADDRESS to 0x%08lx (%s)\n",
                 rom_addr, enable? "ENABLE": "DISABLE" );
                         
-    cli();
-    pcibios_write_config_dword(
-        device->p_pci->bus->number,
-        device->p_pci->devfn,
-        PCI_BASE_ADDRESS_2, 
-        ram_addr
-        );
-    pcibios_write_config_dword(
-        device->p_pci->bus->number,
-        device->p_pci->devfn,
-        PCI_ROM_ADDRESS, 
-        rom_addr
-        );
-    sti();
+    {
+        unsigned long flags;
+        local_irq_save(flags);
+        pcibios_write_config_dword(
+            device->p_pci->bus->number,
+            device->p_pci->devfn,
+            PCI_BASE_ADDRESS_2,
+            ram_addr
+            );
+        pcibios_write_config_dword(
+            device->p_pci->bus->number,
+            device->p_pci->devfn,
+            PCI_ROM_ADDRESS,
+            rom_addr
+            );
+        local_irq_restore(flags);
+    }
     PDEBUGL(2) ( " it's done now ...\n" );
 }
 

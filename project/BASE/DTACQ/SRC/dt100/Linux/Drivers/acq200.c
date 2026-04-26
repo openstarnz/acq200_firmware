@@ -171,7 +171,7 @@ int acq200_bridge_register_device(struct DevGlob* dg)
 	GLOB.ndevs++;
 	return idx;
 }
-struct DevGlob *acq200_get_device( kdev_t i_rdev )
+struct DevGlob *acq200_get_device( dev_t i_rdev )
 {
 	int major = MAJOR( i_rdev );
 	int isearch;
@@ -188,7 +188,7 @@ struct DevGlob *acq200_get_device( kdev_t i_rdev )
 }
 
 
-struct Acq32Path *acq200_makePathDescriptor(kdev_t i_rdev)
+struct Acq32Path *acq200_makePathDescriptor(dev_t i_rdev)
 {
 	struct DevGlob *dg = acq200_get_device(i_rdev);
 	
@@ -309,14 +309,11 @@ int acq200_bridge_mmap( struct file* filp, struct vm_area_struct* vma )
 		first_time = 0;
 		return -1;
 	}
-	return remap_page_range( 
-#ifdef RH9
-		vma,
-#endif
-		vma->vm_start, 
-		pci_resource_start( DG(filp)->pci_dev, 0),
-		vma->vm_end - vma->vm_start, 
-		vma->vm_page_prot 
+	return remap_pfn_range(
+		vma, vma->vm_start,
+		pci_resource_start( DG(filp)->pci_dev, 0) >> PAGE_SHIFT,
+		vma->vm_end - vma->vm_start,
+		vma->vm_page_prot
 		);
 }
 
@@ -752,6 +749,7 @@ static int __devinit
 acq200_bridge_driver_init( struct DevGlob *dg )
 {
 	static struct file_operations bridge_fops = {
+		.owner = THIS_MODULE,
 		.open = acq200_bridge_open,
 		.read = acq200_bridge_read,
 		.write = acq200_bridge_write,
@@ -890,7 +888,7 @@ static void acq200_incoming_message_isr(struct Acq32Device *device)
 	acq32_incoming_i2o_isr(device, mfa);
 }
 
-static void acq200_isr(int irq, void* dev_id, struct pt_regs* regs )
+static irqreturn_t acq200_isr(int irq, void* dev_id)
 {
 	static int bad_report;
 	struct Acq32Device* device = (struct Acq32Device*)dev_id;
@@ -898,10 +896,10 @@ static void acq200_isr(int irq, void* dev_id, struct pt_regs* regs )
 #define OIMR 3 	 /* OIMR bits not interesting, and masked so not int */
 
 	if ((status & ~OIMR) == 0){
-		return;
+		return IRQ_NONE;
 	}
 
-	if (status&ACQ200_OISR_OPQI){ 
+	if (status&ACQ200_OISR_OPQI){
 		dbg(1, "irq %d M:%d %s",irq,device->major,"message");
 		acq200_incoming_message_isr(device);
 	}else if (status&ACQ200_OISR_ODI){
@@ -910,21 +908,22 @@ static void acq200_isr(int irq, void* dev_id, struct pt_regs* regs )
 		dbg(1, "irq %d M:%d %s 0x%08x",
 		    irq, device->major, "doorbell", doorbell);
 
-		acq32_devGetStatus( device, NULL );		
+		acq32_devGetStatus( device, NULL );
 		writel(doorbell, CSR(device, ACQ200_ODR));
 		acq32_doorbell_isr(device, doorbell);
-	}else{ 
+	}else{
 		dbg(1, "irq %d M:%d %s",irq,device->major,"bad");
 		if ((bad_report&0xffff) == 0){
-			err( "IRQ %d don't like this status 0x%08x", 
+			err( "IRQ %d don't like this status 0x%08x",
 			     irq, status );
 		}
 		writel(status,CSR(device, ACQ200_OISR));
 		bad_report++;
-		return;
+		return IRQ_HANDLED;
 	}
 
 	bad_report = 0;
+	return IRQ_HANDLED;
 }
 
 
@@ -1300,12 +1299,12 @@ void acq32_mmap_channel(void)
  */
 	BUG();
 }
-module_init(acq200_bridge_init);
-module_exit(acq200_bridge_exit_module);
-
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Peter.Milne@d-tacq.com");
-MODULE_DESCRIPTION("Driver for ACQ200 BRIDGE");
+/*
+ * The acq200-drv kernel module entry/exit are defined by acq32.c (compiled
+ * via acq200_module.c with -DACQ200), which dispatches to
+ * acq200_init_module() / acq200_cleanup_module() above.  The duplicate
+ * module_init / module_exit / MODULE_LICENSE block that lived here in the
+ * 2.4 source caused link-time symbol clashes on 2.6 and was redundant.
+ */
 
 

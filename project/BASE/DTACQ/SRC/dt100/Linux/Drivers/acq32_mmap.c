@@ -195,7 +195,6 @@ static void acq32_vma_open(struct vm_area_struct *vma)
     struct Acq32Device* device = getPathFromVma( vma )->device;
     
     device->vmas++;
-    MOD_INC_USE_COUNT;
     PDEBUGL(2)( "acq32_vma_open( %p ) device %p\n", vma, device );
 }
 
@@ -260,8 +259,7 @@ static void acq32_vma_release(struct vm_area_struct* vma )
     }
 	
     device->vmas--;
-    MOD_DEC_USE_COUNT;
-//#undef FN    
+//#undef FN
 }
 
 /*

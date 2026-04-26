@@ -488,12 +488,7 @@
 #define PROCFILENAME "acq32"
 #endif
 
-#ifndef PGMCOMOUT
-/* SERIOUS BODGING on 2.4.7-10 */
-void  __global_cli() {}
-void __global_sti() {}
-spinlock_t tqueue_lock;
-#endif
+/* 2.4-only __global_cli/__global_sti stubs and tqueue_lock removed for 2.6 port */
 
 
 //#define DEBUG_MALLOC
@@ -519,21 +514,19 @@ spinlock_t tqueue_lock;
 
 #include "acq32_releasetag.c"
 
-#define MPI( name, def,descr ) \
+#define MPI( name, def, descr ) \
 int name = def; \
-MODULE_PARM( name, "i" ); \
+module_param( name, int, 0644 ); \
 MODULE_PARM_DESC( name, descr );
 
 #define MPL( name, def, descr ) \
 long name = def; \
-MODULE_PARM( name, "l" ); \
+module_param( name, long, 0644 ); \
 MODULE_PARM_DESC( name, descr );
 
 MODULE_AUTHOR("Peter.Milne@d-tacq.com");
 MODULE_DESCRIPTION("D-TACQ Solutions Ltd acq32pci/acq16pci/acq32cpci driver");
-#ifdef MODULE_LICENSE
 MODULE_LICENSE("GPL");
-#endif
             
 MPI( acq32_use_interrupts,   1, "enable/disable interrupts      (1)" );
 MPI( acq32_simulate,         0, "set to 1 to enable simulation  (0)" );
@@ -657,7 +650,7 @@ int acq32_getDeviceCount() {
  * use linear search of max 8 element array - ... at 300+MIPS overhead small!
  */
  
-struct Acq32Device* acq32_get_device( kdev_t i_rdev )
+struct Acq32Device* acq32_get_device( dev_t i_rdev )
 {
     int major = MAJOR( i_rdev );
     int isearch;
@@ -672,12 +665,12 @@ struct Acq32Device* acq32_get_device( kdev_t i_rdev )
     return 0;
 }
 
-int acq32_device_exists( kdev_t i_rdev )
+int acq32_device_exists( dev_t i_rdev )
 {
     return acq32_get_device( i_rdev ) != 0;
 }
 
-int acq32_get_board( kdev_t i_rdev )
+int acq32_get_board( dev_t i_rdev )
 {
     int major = MAJOR( i_rdev );
     int isearch;
@@ -813,7 +806,7 @@ void acq32_readbuffer_delete( struct ReadBuffer* rb )
 
 
 struct Acq32Path* acq32_makePathDescriptor( 
-	kdev_t minor, struct Acq32Device* device)
+	dev_t minor, struct Acq32Device* device)
 {
     struct Acq32Path*   path = KMALLOC( sizeof(struct Acq32Path), GFP_KERNEL );
 
@@ -848,7 +841,7 @@ struct Acq32Path* acq32_makePathDescriptor(
     return path;
 }
 
-static struct Acq32Path *makePathDescriptor(kdev_t minor)
+static struct Acq32Path *makePathDescriptor(dev_t minor)
 {
 	return acq32_makePathDescriptor(minor, acq32_get_device(minor));
 }
@@ -865,36 +858,8 @@ void acq32_freePathDescriptor( struct Acq32Path* path )
     KFREE( path );    
 }
 
-#ifndef ACQ200
-static struct pci_dev*
-acq32_locate( struct pci_dev* p_dev )
-{
-    if ( pci_present() ){
-        
-        p_dev = pci_find_device( VENDOR_ID, DEVICE_ID, p_dev );
-    
-        /*
-         * WORKTODO ... need to discriminate further on Subvendor ID
-         */
-        return p_dev;
-    }
-
-    return NULL;
-}
-
-
-static int
-acq32_get_device_count()
-{
-    struct pci_dev* p_dev = 0;
-    int count;
-
-    for ( count = 0; (p_dev = acq32_locate( p_dev )) != NULL; ++count )
-        ;
-    
-    return count;
-}
-#endif
+/* acq32_locate / acq32_get_device_count removed: replaced by
+ * pci_register_driver + acq32_pci_probe (see below). */
 
 static void clearIoMapping( struct IoMapping* iomap, int is_rom )
 {
@@ -950,12 +915,9 @@ int acqXX_mmap_csr( struct file* filp, struct vm_area_struct* vma )
 		if (boot_cpu_data.x86 > 3)
 			pgprot_val(vma->vm_page_prot) |= _PAGE_PCD;
 #endif
-		if ( remap_page_range( 
-#ifdef RH9
-			     vma,
-#endif
-			     vma->vm_start, 
-			     physical, vsize, vma->vm_page_prot ) ){
+		if ( remap_pfn_range(
+			     vma, vma->vm_start,
+			     physical >> PAGE_SHIFT, vsize, vma->vm_page_prot ) ){
 			return -EAGAIN;
 		}else{
 #ifdef PGMCOMOUT // Rubini does this p277 ??
@@ -1337,14 +1299,15 @@ int verify_ioctl( struct inode *inode, struct file *filp,
     /*
      * the direction is a bitmask, and VERIFY_WRITE catches R/W
      * transfers. `Type' is user-oriented, while
-     * verify_area is kernel-oriented, so the concept of "read" and
-     * "write" is reversed
+     * access_ok is kernel-oriented, so the concept of "read" and
+     * "write" is reversed.  access_ok returns 1 on success (opposite of
+     * the old verify_area which returned 0 on success).
      */
     if ((_IOC_DIR(cmd) & _IOC_READ) &&
-        verify_area(VERIFY_WRITE, (void *)arg, size))
+        !access_ok(VERIFY_WRITE, (void __user *)arg, size))
         return -EINVAL;
     else if ((_IOC_DIR(cmd) & _IOC_WRITE) &&
-             verify_area(VERIFY_READ, (void *)arg, size))
+             !access_ok(VERIFY_READ, (void __user *)arg, size))
         return -EINVAL;
     else
         return 0;
@@ -1575,12 +1538,12 @@ int acq32_request_irq( struct Acq32Path* path )
  */
         if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 ){
 
-            result = request_irq( 
-                device->p_pci->irq, 
-                device->isr, 
-                SA_INTERRUPT|SA_SHIRQ, 
-                isr_name, 
-                device 
+            result = request_irq(
+                device->p_pci->irq,
+                device->isr,
+                IRQF_SHARED,
+                isr_name,
+                device
                 );
 
             device->use_interrupts = result==0;
@@ -1939,11 +1902,8 @@ int acq32_mmap_bigphysmem( struct file* filp, struct vm_area_struct* vma )
     }
 #endif     
        
-    return remap_page_range( 
-#ifdef RH9
-	    vma,
-#endif
-        vma->vm_start, physical, vsize, vma->vm_page_prot 
+    return remap_pfn_range(
+        vma, vma->vm_start, physical >> PAGE_SHIFT, vsize, vma->vm_page_prot
         );
 }
 
@@ -1972,11 +1932,8 @@ int _acq32_mmap_host( struct file* filp, struct vm_area_struct* vma )
         return -EINVAL;                         /* spans too high */
     }else
 #endif    
-        return remap_page_range( 
-#ifdef RH9
-		vma,
-#endif
-		vma->vm_start, physical, vsize, vma->vm_page_prot );
+        return remap_pfn_range(
+		vma, vma->vm_start, physical >> PAGE_SHIFT, vsize, vma->vm_page_prot );
 }
 
 int _acq200_mmap_host( struct file* filp, struct vm_area_struct* vma )
@@ -1990,15 +1947,12 @@ int _acq200_mmap_host( struct file* filp, struct vm_area_struct* vma )
 	PDEBUGL(2)( "acq32_mmap(): start off:%ld physical:0x%08lx vsize:0x%lx",
 		    off, physical, vsize );
 
-        return remap_page_range( 
-#ifdef RH9
-		vma,
-#endif
-		vma->vm_start, physical, vsize, vma->vm_page_prot );
+        return remap_pfn_range(
+		vma, vma->vm_start, physical >> PAGE_SHIFT, vsize, vma->vm_page_prot );
 }
 
 
-ssize_t 
+ssize_t
 acq32_hostbuf_read ( struct file* filp, char* buf, size_t count, loff_t* posp )
 /* output host buffer settings */
 {
@@ -2040,6 +1994,7 @@ int acq32_mmap_host(struct file* filp, struct vm_area_struct* vma )
  */
 
 static struct file_operations acq32_fops = {          // default ops
+    .owner = THIS_MODULE,
 #ifndef ACQ200
     llseek:  acq32_lseek,
     read:    acq32_read,
@@ -2054,21 +2009,25 @@ static struct file_operations acq32_fops = {          // default ops
 
 
 static struct file_operations acq32_AO_immediate_fops = {
+    .owner = THIS_MODULE,
     write:    acq32_AO_immediate_write,
     release:  acq32_release,
 };
 static struct file_operations acq32_AO_fungen_fops = {
+    .owner = THIS_MODULE,
     write:    acq32_AO_function_write,
     open:     acq32_AO_fungen_open,
     release:  acq32_AO_fungen_release,
 };
 
 static struct file_operations acq32_DO_immediate_fops = {
+    .owner = THIS_MODULE,
     write:    acq32_DO_immediate_write,
     release:  acq32_release,
 };
 
 static struct file_operations acq32_DO_fungen_fops = {
+    .owner = THIS_MODULE,
     write:    acq32_DO_function_write,
     open:     acq32_DO_fungen_open,
     release:  acq32_DO_fungen_release,
@@ -2076,11 +2035,13 @@ static struct file_operations acq32_DO_fungen_fops = {
 
 
 static struct file_operations acq32_test_fops = {
+    .owner = THIS_MODULE,
     read:     acq32_test_read,
     release:  acq32_release,
 };
 #ifndef ACQ200
 static struct file_operations acq32_rom_fops = {
+    .owner = THIS_MODULE,
     read:    acq32_rom_read,    // acq32_read
     ioctl:   acq32_ioctl,       // acq32_ioctl
     mmap:    acq32_mmap_rom,    // acq32_mmap
@@ -2089,6 +2050,7 @@ static struct file_operations acq32_rom_fops = {
 };
 #endif
 static struct file_operations acq32_dmabuf_fops = {
+    .owner = THIS_MODULE,
 #ifndef ACQ200
     read:    acq32_dmabuf_read,    // acq32_read
 #endif
@@ -2098,12 +2060,14 @@ static struct file_operations acq32_dmabuf_fops = {
 };
 
 static struct file_operations acq32_hostbuf_fops = {
+	.owner = THIS_MODULE,
 	read: acq32_hostbuf_read,
 	mmap:    acq32_mmap_host,    // acq32_mmap
 	release: acq32_release,
 };
 
 static struct file_operations acq32_master_fops = {
+    .owner = THIS_MODULE,
     read:    acq32_master_read,    // acq32_read
     write:   acq32_master_write,   // acq32_write
     ioctl:   acq32_ioctl,          // acq32_ioctl
@@ -2111,7 +2075,8 @@ static struct file_operations acq32_master_fops = {
     release: acq32_master_release, // acq32_release
 };
 
-static struct file_operations acq32_channel_fops = { 
+static struct file_operations acq32_channel_fops = {
+    .owner = THIS_MODULE,
     read:    acq32_channel_read,    // acq32_read
     write:   acq32_data_write,      // acq32_write
     ioctl:   acq32_ioctl,           // acq32_ioctl
@@ -2120,6 +2085,7 @@ static struct file_operations acq32_channel_fops = {
 };
 
 static struct file_operations acq32_rowdev_fops = {
+    .owner = THIS_MODULE,
     read:    acq32_row_read,        // acq32_read
     write:   acq32_data_write,      // acq32_write
     ioctl:   acq32_ioctl,           // acq32_ioctl
@@ -2127,12 +2093,14 @@ static struct file_operations acq32_rowdev_fops = {
 };
 
 static struct file_operations acq32_status_fops = {
+    .owner = THIS_MODULE,
     open:    acq32_status_open,
     read:    acq32_status_read,
     write:   acq32_status_write,
     release: acq32_status_release,
 };
 static struct file_operations sim_channel_fops = {
+    .owner = THIS_MODULE,
     read:    sim_channel_read,    // acq32_read
     write:   acq32_data_write,    // acq32_write
     ioctl:   acq32_ioctl,    // acq32_ioctl
@@ -2141,6 +2109,7 @@ static struct file_operations sim_channel_fops = {
 };
 
 static struct file_operations sim_rowdev_fops = {
+    .owner = THIS_MODULE,
     read:    sim_rowdev_read,    // acq32_read
     write:   acq32_data_write,    // acq32_write
     ioctl:   acq32_ioctl,    // acq32_ioctl
@@ -2343,42 +2312,87 @@ static void coreDevInit( struct Acq32Device *device )
 }
 
 #ifndef ACQ200
-static int acq32_init_module(void)
-/* old style device location. Should be replaced by probe */
+/*
+ * 2.6 PCI driver model: register a pci_driver and let the kernel call
+ * acq32_pci_probe() once per matching device.  This replaces the 2.4
+ * pci_find_device() polling loop.
+ */
+
+static int acq32_pci_probe( struct pci_dev* p_dev,
+                            const struct pci_device_id* id )
 {
-	int idev;
-	struct pci_dev* p_dev = NULL;
-	struct Acq32Device* device;
+    struct Acq32Device* device;
+    int rc;
 
+    rc = pci_enable_device( p_dev );
+    if ( rc ){
+        PDEBUG( "pci_enable_device failed: %d\n", rc );
+        return rc;
+    }
 
-	S_acq32.ndevs = acq32_simulate? 4: acq32_get_device_count();
+    device = acq32_create_device( p_dev );
+    if ( !device ){
+        pci_disable_device( p_dev );
+        return -ENOMEM;
+    }
 
+    allocateDmaBuffer( device );
+    acq32_device_init( device );
 
-	for ( idev = 0; idev != S_acq32.ndevs; ++idev ){
-		if ( !acq32_simulate ){
-			p_dev = acq32_locate( p_dev );
-			if ( !p_dev ){
-				break;               // all devices disclosed
-			}
-		}else{
-			#define MAXDEAD sizeof(struct pci_dev)/4
-			int idead;
- 
-			p_dev = KMALLOC( sizeof(struct pci_dev), GFP_KERNEL );
-                             
-			for ( idead = 0; idead < MAXDEAD; ++idead ){
-				((unsigned*)p_dev)[idead] = 0xdeadbeef;
-			}
-		}
-		device = acq32_create_device( p_dev );
-		allocateDmaBuffer( device );                 
-		acq32_device_init(device);
+    pci_set_drvdata( p_dev, device );
+    return 0;
+}
 
-		if ( device == 0 ){
-			return -1;
-		}
-	}
-	return 0;
+static void acq32_pci_remove( struct pci_dev* p_dev )
+{
+    /* Per-device teardown is performed in cleanup_module() by walking
+     * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
+     * pci_disable_device() is paired here to undo pci_enable_device()
+     * from probe; the device struct itself is freed in cleanup_module. */
+    pci_disable_device( p_dev );
+}
+
+static struct pci_device_id acq32_pci_id_table[] = {
+    { PCI_DEVICE( VENDOR_ID, DEVICE_ID ) },
+    { 0, }
+};
+MODULE_DEVICE_TABLE( pci, acq32_pci_id_table );
+
+static struct pci_driver acq32_pci_driver = {
+    .name     = "acq32",
+    .id_table = acq32_pci_id_table,
+    .probe    = acq32_pci_probe,
+    .remove   = acq32_pci_remove,
+};
+
+#define MAXDEAD (sizeof(struct pci_dev)/sizeof(unsigned))
+
+static int acq32_init_module(void)
+{
+    if ( acq32_simulate ){
+        int idev;
+
+        for ( idev = 0; idev != 4; ++idev ){
+            struct pci_dev* p_dev =
+                KMALLOC( sizeof(struct pci_dev), GFP_KERNEL );
+            int idead;
+            struct Acq32Device* device;
+
+            for ( idead = 0; idead < MAXDEAD; ++idead ){
+                ((unsigned*)p_dev)[idead] = 0xdeadbeef;
+            }
+            device = acq32_create_device( p_dev );
+            if ( !device ){
+                return -ENOMEM;
+            }
+            allocateDmaBuffer( device );
+            acq32_device_init( device );
+        }
+        S_acq32.ndevs = 4;
+        return 0;
+    }
+
+    return pci_register_driver( &acq32_pci_driver );
 }
 #endif
 
@@ -2434,6 +2448,10 @@ void cleanup_module(void)
 
 #ifdef ACQ200
     acq200_cleanup_module();
+#else
+    if ( !acq32_simulate ){
+        pci_unregister_driver( &acq32_pci_driver );
+    }
 #endif
     remove_proc_entries();
 

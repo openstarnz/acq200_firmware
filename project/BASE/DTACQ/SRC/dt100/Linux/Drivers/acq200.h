@@ -92,7 +92,7 @@ struct Acq200Path {
 int wavegen_driver_init(struct DevGlob *dg);
 void wavegen_driver_remove(struct DevGlob *dg);
 
-struct Acq32Path* acq200_makePathDescriptor(kdev_t minor);
+struct Acq32Path* acq200_makePathDescriptor(dev_t minor);
 void acq200_freePathDescriptor(struct Acq32Path *path);
 
 

@@ -425,68 +425,52 @@
 
 
 
-#ifdef LINUX_NEW_PCI
-
-#include <linux/tqueue.h>
-
-
-#ifndef PREPARE_TQUEUE
-/* not available in linux  2.4.2-2 */
 /*
- * Emit code to initialise a tq_struct's routine and data pointers
+ * 2.6+ compatibility shim for the 2.4 task-queue API used throughout this
+ * driver.  The original code uses tq_struct, INIT_TQUEUE, queue_task and
+ * schedule_task; map these onto modern work_struct + schedule_work.  The
+ * routine/data fields are kept so existing call-sites that test
+ * "if (tq->routine)" or "tq->routine = 0" continue to behave (a NULL
+ * routine becomes a no-op dispatch).
  */
-#define PREPARE_TQUEUE(_tq, _routine, _data)                    \
-        do {                                                    \
-                (_tq)->routine = _routine;                      \
-                (_tq)->data = _data;                            \
-        } while (0)
-#endif
+#include <linux/workqueue.h>
 
-#ifndef INIT_TQUEUE
+struct tq_struct {
+	struct work_struct work;
+	struct list_head list;	/* unused — kept so legacy
+				 * INIT_LIST_HEAD(&tq->list) call-sites compile */
+	void (*routine)(void *);
+	void *data;
+};
 
-/*
- * Emit code to initialise all of a tq_struct
- */
-#define INIT_TQUEUE(_tq, _routine, _data)                       \
-        do {                                                    \
-                INIT_LIST_HEAD(&(_tq)->list);                   \
-                (_tq)->sync = 0;                                \
-                PREPARE_TQUEUE((_tq), (_routine), (_data));     \
-        } while (0)
+static inline void __acq32_tq_dispatch(struct work_struct *w)
+{
+	struct tq_struct *t = container_of(w, struct tq_struct, work);
+	if (t->routine)
+		t->routine(t->data);
+}
 
-
-#endif
-#define WAIT_QUEUE wait_queue_head_t
-
-#else                                    /* Linux 2.2.x */
-/*
-#define INIT_LIST_HEAD( _tq ) \
-   do { \
-        (_tq)->next = 0;\
-        (_tq)->sync = 0;\
-   } while(0)
-*/
-#define WAIT_QUEUE struct wait_queue*
-#define init_waitqueue_head( wqp ) *wqp = NULL
-#define init_MUTEX( mutp ) *mutp = MUTEX
-#define SET_MODULE_OWNER( mod )
-
-#define INIT_TQUEUE(_tq, _routine, _data)                       \
-    do {                                                        \
-        (_tq)->next = (void*)0;                                  \
-        (_tq)->sync = 0;                                         \
-        (_tq)->routine = _routine;                               \
-        (_tq)->data = _data;                                     \
+#define PREPARE_TQUEUE(_tq, _routine, _data) do {		\
+		(_tq)->routine = (_routine);			\
+		(_tq)->data    = (_data);			\
 	} while (0)
 
-#define pci_resource_start( pci, bar ) pci->base_address[bar]        
+#define INIT_TQUEUE(_tq, _routine, _data) do {			\
+		INIT_WORK(&(_tq)->work, __acq32_tq_dispatch);	\
+		PREPARE_TQUEUE((_tq), (_routine), (_data));	\
+	} while (0)
 
-extern inline int schedule_task( struct tq_struct* task )
-{
-    queue_task( task, &tq_scheduler );
-    return 1;
-}
-#endif
+#define queue_task(_tq, _q)   schedule_work(&(_tq)->work)
+#define schedule_task(_tq)    schedule_work(&(_tq)->work)
+
+#define WAIT_QUEUE wait_queue_head_t
+
+/* MOD_*_USE_COUNT are gone in 2.6; module refcount is auto-managed via
+ * file_operations->owner = THIS_MODULE.  Make the legacy macros no-ops
+ * so existing call-sites continue to build. */
+#define MOD_IN_USE 0
+#define MOD_INC_USE_COUNT do {} while (0)
+#define MOD_DEC_USE_COUNT do {} while (0)
 
 
 
@@ -495,7 +479,7 @@ extern inline int schedule_task( struct tq_struct* task )
  * Macros to help debugging
  */
 
-#include <linux/tqueue.h>
+#include <linux/interrupt.h>	/* irqreturn_t, IRQ_HANDLED */
 #include <linux/time.h>
 
 //#include "printp.h"
@@ -898,7 +882,7 @@ struct Acq32Device {
 		struct Acq32Device* device,struct Acq32ImagesDef* id);
 	void (*set_mailbox)(struct Acq32Device* device, int mbx, u32 value );
 	void (*get_mailbox)(struct Acq32Device* device, int mbx, u32 *value);
-	void (*isr)(int irq, void* dev_id, struct pt_regs* regs);
+	irqreturn_t (*isr)(int irq, void* dev_id);
 	int (*coreDevInit)(struct Acq32Device* device);
 	void (*i2o_return_mfa)(struct Acq32Device* device, u32 mfa);
 	void* (*i2o_mfa2va)(struct Acq32Device* device, u32 mfa);
@@ -907,9 +891,9 @@ struct Acq32Device {
 				   int start, int stride);
 };
 
-struct Acq32Device* acq32_get_device( kdev_t i_rdev );
-int acq32_device_exists( kdev_t i_rdev );
-int acq32_get_board( kdev_t i_rdev );
+struct Acq32Device* acq32_get_device( dev_t i_rdev );
+int acq32_device_exists( dev_t i_rdev );
+int acq32_get_board( dev_t i_rdev );
 struct Acq32Device* acq32_get_device_from_filp( struct file* filp );
 struct Acq32Device* acq32_get_device_from_board( int board );
 int acq32_get_board_from_device( struct Acq32Device* device );
@@ -994,7 +978,7 @@ int acq32_copyToChannelMap(
 
 
 struct Acq32Path {
-    kdev_t minor;                 // customisation for this node
+    dev_t minor;                 // customisation for this node
     struct Acq32Device* device;          // my device
     Acq32ChannelFileInfo* info;   // path uses this info buffer
     // which just might be this one ...
@@ -1360,13 +1344,14 @@ static inline u32 genericIntBufGet( struct GenericIntBuf* buf ){
     if ( !genericIntBufIsEmpty( buf ) ){
 	u32 data;
 
+	unsigned long flags;
 	streamDump( buf, "streamGet()" );
 
-	cli();
+	local_irq_save(flags);
 	data = buf->buffers[buf->iget];
 	buf->iputback = buf->iget;
 	buf->iget = genericIntBufInc( buf, buf->iget );
-	sti();
+	local_irq_restore(flags);
 
 	return data;
     }else{
@@ -1616,10 +1601,10 @@ struct IoMapping *acq200_bb_pool_alloc(
 void acq200_bb_pool_free(struct Acq32Device *device, struct IoMapping *map);
 
 extern struct Acq32Path* 
-acq32_makePathDescriptor(kdev_t minor, struct Acq32Device *device);
+acq32_makePathDescriptor(dev_t minor, struct Acq32Device *device);
 void acq32_freePathDescriptor( struct Acq32Path* path );
 
-struct DevGlob *acq200_get_device( kdev_t i_rdev );
+struct DevGlob *acq200_get_device( dev_t i_rdev );
 
 
 /*
