@@ -66,6 +66,7 @@
 #include <linux/proc_fs.h>
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
+#include <linux/sched.h>
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */

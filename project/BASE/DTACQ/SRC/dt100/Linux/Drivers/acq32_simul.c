@@ -147,6 +147,7 @@ WARNING: this functionality has rotted - don't expect it to work
 #include <linux/proc_fs.h>
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
+#include <linux/sched.h>        /* schedule() */
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */

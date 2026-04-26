@@ -23,6 +23,7 @@ struct task_struct;
 #include <linux/kernel.h>
 //#include <linux/interrupt.h>
 #include <linux/pci.h>
+#include <linux/sched.h>
 #include <linux/time.h>
 #include <linux/init.h>
 #include <linux/timex.h>

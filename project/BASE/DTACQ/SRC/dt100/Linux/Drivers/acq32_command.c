@@ -308,6 +308,7 @@
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
 #include <linux/time.h>
+#include <linux/sched.h>        /* schedule(), signal_pending() */
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
