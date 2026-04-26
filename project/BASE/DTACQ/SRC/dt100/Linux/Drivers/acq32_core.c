@@ -1716,9 +1716,12 @@ void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa )
 
 		PDEBUGL(4)( " queued mfa 0x%08x\n", mfa );
             
+		/* mark_bh(IMMEDIATE_BH) — 2.4 immediate-BH trigger; under the
+		 * 2.6 shim queue_task() already maps to schedule_work, which
+		 * runs from process context, so this line is redundant. */
 		queue_task( &device->m_dpd.isr_bh, &tq_immediate );
-		mark_bh( IMMEDIATE_BH );
-                        
+
+
 		PDEBUGL(5)( " queue_task %s\n",
 			    device->m_dpd.isr_bh.routine==
 			    acq32_streaming_isr_bh?
