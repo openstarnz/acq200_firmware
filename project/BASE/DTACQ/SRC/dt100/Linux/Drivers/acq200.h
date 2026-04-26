@@ -71,23 +71,27 @@ struct Acq200Path {
 #define LBUF(file) (PD(file)->scratch)
 #define LBUFLEN    2048
 
-#define ACQ200_ON_OPEN(inode, file)\
-        do { \
-                if ((PD(file)=acq200_makePathDescriptor(inode->i_rdev)) == 0)\
-                        return -ENODEV;\
-                else \
-                         DG(file)->bridge_dev.open_count++; \
-	 } while(0)
+/* Note: PD(file) casts file->private_data to (struct Acq32Path *), so
+ * it is not an lvalue under modern GCC.  Assign through private_data
+ * directly. */
+#define ACQ200_ON_OPEN(inode, file) \
+	do { \
+		(file)->private_data = \
+			acq200_makePathDescriptor((inode)->i_rdev); \
+		if (PD(file) == 0) \
+			return -ENODEV; \
+		DG(file)->bridge_dev.open_count++; \
+	} while (0)
 
 #define ACQ200_ON_CLOSE(file) \
-        do { \
-                if (PD(file) != 0){ \
-                         acq200_freePathDescriptor(PD(file));\
-                         DG(file)->bridge_dev.open_count--;\
-                         PD(file) = 0;\
-                } \
-                return 0; \
-         } while(0)
+	do { \
+		if (PD(file) != 0) { \
+			acq200_freePathDescriptor(PD(file)); \
+			DG(file)->bridge_dev.open_count--; \
+			(file)->private_data = NULL; \
+		} \
+		return 0; \
+	} while (0)
 
 int wavegen_driver_init(struct DevGlob *dg);
 void wavegen_driver_remove(struct DevGlob *dg);
