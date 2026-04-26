@@ -609,20 +609,12 @@ void acq32_enable_rom( struct Acq32Device* device, int enable )
                 rom_addr, enable? "ENABLE": "DISABLE" );
                         
     {
+        /* pcibios_write_config_dword() was removed in 2.6; use the
+         * modern pci_dev-based API. */
         unsigned long flags;
         local_irq_save(flags);
-        pcibios_write_config_dword(
-            device->p_pci->bus->number,
-            device->p_pci->devfn,
-            PCI_BASE_ADDRESS_2,
-            ram_addr
-            );
-        pcibios_write_config_dword(
-            device->p_pci->bus->number,
-            device->p_pci->devfn,
-            PCI_ROM_ADDRESS,
-            rom_addr
-            );
+        pci_write_config_dword(device->p_pci, PCI_BASE_ADDRESS_2, ram_addr);
+        pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS,    rom_addr);
         local_irq_restore(flags);
     }
     PDEBUGL(2) ( " it's done now ...\n" );
