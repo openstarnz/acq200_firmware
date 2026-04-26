@@ -219,15 +219,22 @@ static void acq32_vma_release(struct vm_area_struct* vma )
 		  cm->buffers[ibuf] != (void*)0;     ++ibuf ){
 #ifdef LINUX_NEW_PCI
             struct page* page = virt_to_page( cm->buffers[ibuf] );
-            int count;
+            int count = page_count( page );
 
-            if ( (count = page_count( page )) != 1 ){
-                set_page_count( page, 1 );
-                PDEBUGL(1)( " BUFFER:%p %4x count %d fixed to %d\n", 
+            /* The fault handler calls get_page() on the first page of
+             * each DMABUF_SIZE-aligned buffer; drop the matching refs
+             * here so __free_pages() will actually free.  set_page_count()
+             * was used in the 2.4 source to slam the count to 1; it's
+             * not exported in 2.6, and put_page() is the correct API. */
+            while ( page_count( page ) > 1 ){
+                put_page( page );
+            }
+            if ( count != 1 ){
+                PDEBUGL(1)( " BUFFER:%p %4lx count %d fixed to %d\n",
 			    cm->buffers[ibuf],
-			    page-mem_map,
-			    count, 
-			    page_count( page ) 
+			    (long)(page-mem_map),
+			    count,
+			    page_count( page )
 		    );
             }
             PDEBUG_PAGE( 5, page );
@@ -270,75 +277,71 @@ static void acq32_vma_release(struct vm_area_struct* vma )
  * viva 500+ bogomips!
  */
 
-#ifdef LINUX_NEW_PCI
-
-// crib from Rubini#2, 393 - needs semaphore to protect data structs ??
-
-struct page*
-#else
-unsigned long 
-#endif
-acq32_vma_nopage(struct vm_area_struct *vma,
-		 unsigned long address, int write)
-			       
+/*
+ * 2.6.23+ replaced ->nopage with ->fault.  Old contract:
+ *     struct page *nopage(vma, address, type) — return the page.
+ * New contract:
+ *     int fault(vma, vmf) — set vmf->page, return 0 (or VM_FAULT_SIGBUS).
+ * The body below is the original page-lookup logic, just adapted to
+ * stash the result in vmf->page.
+ */
+static int acq32_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-//#define FN "acq32_vma_nopage() "
-	struct Acq32Path* path = getPathFromVma( vma );
-	int imap = getChannelMapIndex( path, vma );
+	struct Acq32Path *path = getPathFromVma(vma);
+	int imap = getChannelMapIndex(path, vma);
+	unsigned long address = (unsigned long)vmf->virtual_address;
 
-	PDEBUGL(4)( "%p 0x%08lx %d %d\n", vma, address, write, imap );
+	PDEBUGL(4)("%p 0x%08lx %d\n", vma, address, imap);
 
-	if ( imap == -1 ){
-		return 0;            // SEGFAULT
-	}else{
-		ChannelMapping* cm = path->channel_maps[imap];
+	if (imap == -1) {
+		return VM_FAULT_SIGBUS;
+	} else {
+		ChannelMapping *cm = path->channel_maps[imap];
 
-		unsigned long offset        = address - vma->vm_start;	        
-		int      ibuf               = offset/DMABUF_SIZE;
-		int page_offset_in_buffer   = offset - ibuf*DMABUF_SIZE;
+		unsigned long offset      = address - vma->vm_start;
+		int ibuf                  = offset / DMABUF_SIZE;
+		int page_offset_in_buffer = offset - ibuf * DMABUF_SIZE;
 
-		// if ( offset > dev->size ) goto out;    // needs range check
-		// ie if ibuf > maxbuf fail
-	    
 		unsigned long page_addr = (unsigned long)
-			(cm->buffers[ibuf] + page_offset_in_buffer);	    
-		struct page* page;
+			(cm->buffers[ibuf] + page_offset_in_buffer);
+		struct page *page;
 
-		PDEBUGL(5)( "page_offset_in_buffer %d page_addr 0x%08lx\n",
-			    page_offset_in_buffer, page_addr );
-    
-		PDUMPL( 5, , (void*)page_addr );
+		PDEBUGL(5)("page_offset_in_buffer %d page_addr 0x%08lx\n",
+			   page_offset_in_buffer, page_addr);
 
-		if ( (acq32_fill_vma > 1 && page_offset_in_buffer == 0) ||
-		     acq32_fill_vma > 2 ){
-			sprintf( (char*)page_addr, 
-				 "PAGE 0x%08lx offset 0x%08lx ibuf%d\n",
-				 page_addr, offset, ibuf );
+		PDUMPL(5, , (void *)page_addr);
+
+		if ((acq32_fill_vma > 1 && page_offset_in_buffer == 0) ||
+		    acq32_fill_vma > 2) {
+			sprintf((char *)page_addr,
+				"PAGE 0x%08lx offset 0x%08lx ibuf%d\n",
+				page_addr, offset, ibuf);
 		}
 
-		page = virt_to_page( page_addr );
-	
-		PDEBUGL(5)( "off:%06ld ibuf:%d page_addr:0x%08lx page:%p\n",
-			    offset, ibuf, page_addr, page );
-		PDUMPL( 5, , page );
+		page = virt_to_page(page_addr);
 
-		// incr seems to be needed for first page, not the rest ...
-		// so don't touch the intermediates         
-		if( page_offset_in_buffer== 0 ){
-			get_page( page );
+		PDEBUGL(5)("off:%06ld ibuf:%d page_addr:0x%08lx page:%p\n",
+			   offset, ibuf, page_addr, page);
+		PDUMPL(5, , page);
+
+		/* Original 2.4 nopage incremented refcount only for the first
+		 * page of each buffer.  Preserve that — vma_release relies on
+		 * it to know how many put_page() calls are needed. */
+		if (page_offset_in_buffer == 0) {
+			get_page(page);
 		}
 
-		PDEBUGL(5)(  "returning page %p\n", page );
-		return page;
+		vmf->page = page;
+		return 0;
 	}
 }
 
 
 
 struct vm_operations_struct acq32_channel_vm_ops = {
-    open:     acq32_vma_open,
-    close:    acq32_vma_release,
-    nopage:   acq32_vma_nopage,
+	.open  = acq32_vma_open,
+	.close = acq32_vma_release,
+	.fault = acq32_vma_fault,
 };
 
 // VMA---------------------------------------------------------------------VMA--//         
