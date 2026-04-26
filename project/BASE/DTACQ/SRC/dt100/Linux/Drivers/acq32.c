@@ -2254,22 +2254,11 @@ acq32_create_device(struct pci_dev* p_dev )
 
 void init_fops(void)
 {
-	SET_MODULE_OWNER( &acq32_fops );
-	SET_MODULE_OWNER( &acq32_test_fops );
-#ifndef ACQ200
-	SET_MODULE_OWNER( &acq32_rom_fops );
-#endif
-	SET_MODULE_OWNER( &acq32_dmabuf_fops );
-	SET_MODULE_OWNER( &acq32_master_fops );
-	SET_MODULE_OWNER( &acq32_channel_fops );
-	SET_MODULE_OWNER( &acq32_rowdev_fops );    
-	SET_MODULE_OWNER( &acq32_hostbuf_fops );
-	SET_MODULE_OWNER( &sim_channel_fops );
-	SET_MODULE_OWNER( &sim_rowdev_fops );
-	SET_MODULE_OWNER( &acq32_AO_immediate_fops );
-	SET_MODULE_OWNER( &acq32_AO_fungen_fops );
-	SET_MODULE_OWNER( &acq32_DO_immediate_fops );
-	SET_MODULE_OWNER( &acq32_DO_fungen_fops );
+	/* SET_MODULE_OWNER() was a 2.4 macro that assigned fops->owner
+	 * = THIS_MODULE.  In 2.6 the macro is gone; .owner is set
+	 * statically in each file_operations initialiser above, so this
+	 * function is now a no-op (kept as a stable call-site for the
+	 * existing init_module path). */
 }
 
 
