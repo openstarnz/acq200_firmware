@@ -232,7 +232,7 @@ static void acq32_vma_release(struct vm_area_struct* vma )
             if ( count != 1 ){
                 PDEBUGL(1)( " BUFFER:%p %4lx count %d fixed to %d\n",
 			    cm->buffers[ibuf],
-			    (long)(page-mem_map),
+			    (long)page_to_pfn(page),
 			    count,
 			    page_count( page )
 		    );
