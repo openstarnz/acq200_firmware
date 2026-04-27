@@ -875,12 +875,10 @@ static void clearIoMapping( struct IoMapping* iomap, int is_rom )
     if ( !is_rom && iomap->va ){
         iounmap( iomap->va );
     }
-#ifdef LINUX_NEW_PCI    
-    if ( !is_rom && strlen( iomap->name ) ){
-        release_mem_region( iomap->pa, iomap->len );
-    }
-#endif
-    memset( iomap, 0, sizeof( struct IoMapping ) );     
+    /* The matching release_mem_region() on each BAR was removed when
+     * we switched to pci_request_regions()/pci_release_regions() in
+     * probe/remove; re-releasing here would double-free the resource. */
+    memset( iomap, 0, sizeof( struct IoMapping ) );
 }
 static void unmap_pci_memory( struct Acq32Device* device )
 {
@@ -2328,6 +2326,18 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
         return rc;
     }
 
+    /* Claim all BARs through the PCI subsystem so no other driver
+     * (notably drivers/mtd/maps/pci.c, which also matches DEC 21285)
+     * can probe the same hardware behind our back.  This subsumes the
+     * per-BAR request_mem_region() that acq32_makeIoMapping() used to
+     * do — those calls have been removed. */
+    rc = pci_request_regions( p_dev, "acq32" );
+    if ( rc ){
+        dev_err(&p_dev->dev, "pci_request_regions failed: %d\n", rc);
+        pci_disable_device( p_dev );
+        return rc;
+    }
+
     /* The DEC 21285 / ACQ32 hardware is a 32-bit DMA master.  Without
      * an explicit mask the kernel may hand us coherent buffers above
      * the 4 GiB line, which the device silently can't reach — leading
@@ -2347,6 +2357,7 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
 
     device = acq32_create_device( p_dev );
     if ( !device ){
+        pci_release_regions( p_dev );
         pci_disable_device( p_dev );
         return -ENOMEM;
     }
@@ -2362,8 +2373,10 @@ static void acq32_pci_remove( struct pci_dev* p_dev )
 {
     /* Per-device teardown is performed in cleanup_module() by walking
      * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
-     * pci_disable_device() is paired here to undo pci_enable_device()
-     * from probe; the device struct itself is freed in cleanup_module. */
+     * pci_release_regions() and pci_disable_device() pair the
+     * matching calls in probe; the device struct itself is freed in
+     * cleanup_module. */
+    pci_release_regions( p_dev );
     pci_disable_device( p_dev );
 }
 

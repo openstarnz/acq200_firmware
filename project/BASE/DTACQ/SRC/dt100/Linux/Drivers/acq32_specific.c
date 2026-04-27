@@ -86,17 +86,19 @@ static int acq32_makeIoMapping(
 
     pim->pa = pci_resource_start(device->p_pci, bar)&PCI_BASE_ADDRESS_MEM_MASK;
     pim->len = bar==PCI_BA_CSR? CSR_SIZE: RAM_SIZE;
-    
-    if ( request_mem_region( pim->pa, pim->len, pim->name ) != 0 ){
-        pim->va = ioremap_nocache( pim->pa, pim->len );
-    }else{
-        PDEBUGL(1)(  "request_mem_region( 0x%08lx, %d, %s ) failed\n",
-                    pim->pa, pim->len, pim->name );
-        rc = -ENODEV;
+
+    /* The whole device's BARs are already claimed via pci_request_regions()
+     * in acq32_pci_probe(); just map this one. */
+    pim->va = ioremap_nocache( pim->pa, pim->len );
+    if ( !pim->va ){
+        dev_err(&device->p_pci->dev,
+                "ioremap_nocache 0x%08lx %d %s failed\n",
+                pim->pa, pim->len, pim->name);
+        rc = -ENOMEM;
     }
 
-    PDEBUG(  "request_mem_region 0x%08lx %d %s\n", 
-	    pim->pa, pim->len, pim->name );
+    PDEBUG( "ioremap 0x%08lx %d %s -> %p\n",
+            pim->pa, pim->len, pim->name, pim->va );
     return rc;
 }
 
