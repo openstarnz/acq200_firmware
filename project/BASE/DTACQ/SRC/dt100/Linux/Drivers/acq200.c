@@ -869,7 +869,11 @@ static void acq200_dev_i2o_return_mfa(struct Acq32Device* device, unsigned mfa)
 
 static void* acq200_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 {
-	return (void*)((unsigned)device->dmabuf.va+(mfa&ACQ200_PCIWINMSK));
+	/* The 2.4 source cast dmabuf.va to (unsigned), which is 32-bit on
+	 * x86_64 — that truncated the kernel virtual address and the
+	 * resulting "VA" pointed at random low memory.  Use uintptr_t so
+	 * the pointer arithmetic survives 64-bit. */
+	return (void*)((uintptr_t)device->dmabuf.va + (mfa & ACQ200_PCIWINMSK));
 }
 static void acq200_incoming_message_isr(struct Acq32Device *device)
 {

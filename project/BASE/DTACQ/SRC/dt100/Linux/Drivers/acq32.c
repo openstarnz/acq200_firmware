@@ -471,6 +471,7 @@
 #include <linux/pci.h>
 #include <linux/sched.h>
 #include <linux/time.h>
+#include <linux/dma-mapping.h>	/* DMA_BIT_MASK */
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
@@ -606,11 +607,15 @@ extern void acq32_globalIoreadFetchMutexUp()
 
 static void allocateDmaBuffer( struct Acq32Device* device )
 {
+    /* GFP_DMA32 keeps the allocation below the 4 GiB line so the 32-bit
+     * DMA engine on the DEC 21285 can actually reach it.  Without this,
+     * the device DMA-truncates the address and we phys_to_virt() back
+     * to garbage — manifests as later slab corruption. */
+    PDEBUGL(4)(  " calling __get_free_pages( GFP_KERNEL|GFP_DMA32, %d )\n",
+                 PAGE_ORDER);
 
-    PDEBUGL(4)(  " calling __get_free_pages( GFP_KERNEL, %d )\n",PAGE_ORDER);
-    
-    device->dmabuf.va = 
-        (u32*)__get_free_pages( GFP_KERNEL, PAGE_ORDER );
+    device->dmabuf.va =
+        (u32*)__get_free_pages( GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
 
     PDEBUGL(4)(  " back\n" );
     
@@ -2321,6 +2326,23 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
     if ( rc ){
         PDEBUG( "pci_enable_device failed: %d\n", rc );
         return rc;
+    }
+
+    /* The DEC 21285 / ACQ32 hardware is a 32-bit DMA master.  Without
+     * an explicit mask the kernel may hand us coherent buffers above
+     * the 4 GiB line, which the device silently can't reach — leading
+     * to the device DMA-ing to truncated addresses and the driver
+     * then phys_to_virt()-ing the resulting MFA into random kernel
+     * memory.  Pin both the streaming and consistent masks at 32. */
+    rc = pci_set_dma_mask( p_dev, DMA_BIT_MASK(32) );
+    if ( !rc ){
+        rc = pci_set_consistent_dma_mask( p_dev, DMA_BIT_MASK(32) );
+    }
+    if ( rc ){
+        dev_warn(&p_dev->dev,
+                 "32-bit DMA mask not available (%d) — DMA may corrupt\n",
+                 rc);
+        /* Continue anyway; the warning will be in dmesg. */
     }
 
     device = acq32_create_device( p_dev );
