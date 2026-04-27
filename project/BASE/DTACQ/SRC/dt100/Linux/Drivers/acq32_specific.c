@@ -574,7 +574,9 @@ static void _acq32_set_mailbox(
 
 static void unprintable_as_dots( char string[] )
 {
-    int istring;
+    /* size_t, not int — on 64-bit, an unterminated string could let
+     * the index wrap past INT_MAX into UB. */
+    size_t istring;
 
     for ( istring = 0; string[istring] != '\0'; ++istring ){
         if ( !isprint( string[istring] ) ){
@@ -648,13 +650,18 @@ static int pgm_sscanf(
     return (strlen(s1)!=0) + (strlen(s2)!=0) + (strlen(s3)!=0);
 }
 
-static void trim( char buf[] ) 
+static void trim( char buf[] )
 {
-    int ix;
+    /* Original used int.  On x86_64 strlen() returns size_t (8 bytes);
+     * "int ix = strlen(buf)-1" silently truncates the high bits, and
+     * if strlen returned anything > INT_MAX, sign-extending ix into a
+     * pointer offset walks buf into unmapped memory.  Use size_t. */
+    size_t len = strlen(buf);
 
-    for ( ix = strlen(buf)-1; ix; --ix ){
-	if ( buf[ix] == ' ' ){
-	    buf[ix] = '\0';
+    while ( len > 1 ){
+	--len;
+	if ( buf[len] == ' ' ){
+	    buf[len] = '\0';
 	}
     }
 }
@@ -689,6 +696,7 @@ acq32_getFirmwareName(
 #else
 	memcpy_fromio( client_buf, rom_bytes+0x34, nbuf );
 #endif
+	client_buf[nbuf] = '\0';	/* hard NUL terminator for unprintable_as_dots/trim */
 	if ( !rom_was_enabled ){
 		acq32_enable_rom( device, FALSE );
 	}
@@ -721,8 +729,9 @@ acq32_getLcaName( struct Acq32Device* device, char client_buf[], int nbuf )
 
 // PGM: heavy Magic!!
 
-    p_header = (struct image_header*)(rom_bytes+0x000b0000); 
+    p_header = (struct image_header*)(rom_bytes+0x000b0000);
     memcpy_fromio( client_buf, p_header->Name, nbuf );
+    client_buf[nbuf] = '\0';	/* hard NUL terminator */
 
     if ( !rom_was_enabled ){
         acq32_enable_rom( device, FALSE );
@@ -731,7 +740,7 @@ acq32_getLcaName( struct Acq32Device* device, char client_buf[], int nbuf )
     unprintable_as_dots( client_buf );
     trim( client_buf );
 }
-static void 
+static void
 acq32_getCalInfo( struct Acq32Device* device, char client_buf[], int nbuf )
 {
     char* rom_bytes = (char*)device->rom.va;
@@ -756,8 +765,9 @@ acq32_getCalInfo( struct Acq32Device* device, char client_buf[], int nbuf )
 
 // PGM: heavy Magic!!
 
-    p_header = (struct image_header*)(rom_bytes+0x000f0000); 
+    p_header = (struct image_header*)(rom_bytes+0x000f0000);
     memcpy_fromio( client_buf, p_header->Name, nbuf );
+    client_buf[nbuf] = '\0';	/* hard NUL terminator */
 
     if ( !rom_was_enabled ){
         acq32_enable_rom( device, FALSE );
