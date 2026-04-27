@@ -941,7 +941,7 @@ int acqXX_mmap_csr( struct file* filp, struct vm_area_struct* vma )
 #ifdef LINUX_NEW_PCI
 int acq32_read_proc(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 #else
     int acq32_read_proc(char *buf, char **start, off_t offset,
                         int len, int unused)
@@ -951,6 +951,7 @@ int acq32_read_proc(
 #define LIMIT (PAGE_SIZE-80) /* don't print any more after this size */
 #define PRINTF(fmt, args...) sprintf(buf+len, fmt, ## args)
 
+    *eof = 1;	/* single-shot — full payload returned in this call */
     len = 0;
 
     if ( S_acq32.ndevs == 0 ){
@@ -1019,12 +1020,13 @@ int acq32_read_proc(
 
 int acq32_read_proc_bus(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 {
     int idev;
 #define LIMIT (PAGE_SIZE-80) /* don't print any more after this size */
 #define PRINTF(fmt, args...) sprintf(buf+len, fmt, ## args)
 
+    *eof = 1;	/* single-shot — full payload returned in this call */
     len = 0;
 
     if ( S_acq32.ndevs == 0 ){
@@ -1086,10 +1088,11 @@ int acq32_report_version( char *buf, int max_len )
 
 int acq32_debug_read_proc(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 {
     int iboard;
 
+    *eof = 1;
     len = acq32_report_version( buf, 4096 );
     
     for ( iboard = 0; iboard != S_acq32.ndevs; ++iboard ){
@@ -1131,10 +1134,11 @@ int acq32_debug_read_proc(
 
 int acq32_debug2_read_proc(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 {
     int iboard;
 
+    *eof = 1;
     len = 0;
 
     for ( iboard = 0; iboard != S_acq32.ndevs; ++iboard ){
@@ -1175,8 +1179,9 @@ int acq32_debug2_read_proc(
 
 int acq32_globs_read_proc(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 {
+    *eof = 1;
     len = 0;
 
 #define G_PRINTF( glob, fmt ) \
@@ -1237,12 +1242,13 @@ static void delta_tv(
 #ifdef LINUX_NEW_PCI
 int acq32_inst_read_proc(
     char* buf, char** start, off_t offset,
-    int len, int* unused1, void* unused2   )
+    int len, int *eof, void* unused2   )
 #else
     int acq32_inst_read_proc(char *buf, char **start, off_t offset,
                              int len, int unused)
 #endif
 {
+    *eof = 1;
     len = 0;
 
     if ( acq32_instrument_buf_len == 0 ){
