@@ -633,9 +633,12 @@ static void allocateDmaBuffer( struct Acq32Device* device )
 
 static void freeDmaBuffer( struct Acq32Device* device )
 {
-    if ( device->dmabuf.len ){
-        free_pages( (unsigned long)device->dmabuf.len, PAGE_ORDER );
-        device->dmabuf.va = (void*)0;
+    /* Pre-existing bug: this used to pass dmabuf.len (a size) as the
+     * address to free_pages(), which panics on rmmod once free_pages
+     * actually walks the page tables.  Pass the virtual address. */
+    if ( device->dmabuf.len && device->dmabuf.va ){
+        free_pages( (unsigned long)device->dmabuf.va, PAGE_ORDER );
+        device->dmabuf.va = NULL;
         device->dmabuf.len = 0;
     }
 }
