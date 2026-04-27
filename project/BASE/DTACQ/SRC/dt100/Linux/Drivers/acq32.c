@@ -2462,6 +2462,10 @@ void cleanup_module(void)
         
         if ( !acq32_simulate && device->p_pci ){
             unmap_pci_memory( device );
+        }else if ( acq32_simulate && device->p_pci ){
+            /* simulate mode KMALLOC'd a fake pci_dev — free it. */
+            KFREE( device->p_pci );
+            device->p_pci = NULL;
         }
         if ( device->instrument_buf.buf ){
             KFREE( device->instrument_buf.buf );
@@ -2470,7 +2474,10 @@ void cleanup_module(void)
 #ifndef ACQ200
         freeDmaBuffer( device );
 #endif
-	KFREE(device->p_md);
+	/* device->p_md points at a static struct returned by
+	 * acq32_getDriver()/acq32_getSimul() — not heap memory.  The
+	 * matching KFREE() in the 2.4 source was a latent bug; in 2.6
+	 * it trips slub's BUG_ON for free-of-non-slab. */
 	KFREE(device);
     }
 
