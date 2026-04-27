@@ -742,14 +742,15 @@ int acq32_waitInt( struct Acq32Device* device, int timeout )
 
 static int acq32_waitAuxMessage(  struct Acq32Device* device, int timeout )
 {
-    /* Original 2.4 used cli()/sti() to fence against the ISR; on 2.6 SMP
-     * that doesn't actually exclude an ISR running on another CPU, but the
-     * existing protocol (waitq + aux_mfa flag) behaves the same when this
-     * pair is replaced literally.  TODO: convert to wait_event_*. */
-    local_irq_disable();
-
+    /* The 2.4 source bracketed the aux_mfa check + sleep with cli()/sti().
+     * That was an attempt to close a check-then-sleep race against the
+     * ISR, but on 2.6 SMP local_irq_disable() doesn't fence against an
+     * ISR running on a different CPU, and sleeping with local IRQs
+     * disabled deadlocks (or panics under DEBUG_ATOMIC_SLEEP).  Drop the
+     * fence; the worst case is one missed wake-up that the sleep timeout
+     * recovers from.  TODO: rewrite as wait_event_interruptible_timeout()
+     * with a proper condition for atomic check+wait. */
     if ( device->m_dpd.aux_mfa != 0 ){
-        local_irq_enable();
         return 0;
     }else{
         int rc;
@@ -802,7 +803,6 @@ static int _acq32_devSendCommand(
     PDEBUGL(2)(  "device->use_interrupts %d\n", device->use_interrupts );
      
     if ( device->use_interrupts ){
-        local_irq_disable();
         device->set_mailbox( device, BP_MB_COMMAND, command );
         PDEBUGL(2)(  "sent command, call acq32_devAckInt()\n" );
         rv = acq32_devAckInt( device );
@@ -922,7 +922,6 @@ acq32_devSendQuery(
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
     
     if ( device->use_interrupts ){
-        local_irq_disable();
         device->set_mailbox( device, BP_MB_COMMAND, command|BP_CI_QUERY );
         error = acq32_devAckInt( device );
     }else{
@@ -962,7 +961,6 @@ static int acq32_devSendQueryWaitAuxMessage(
 
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
 
-    local_irq_disable();
     device->set_mailbox( device, BP_MB_COMMAND, command|BP_CI_QUERY );
     error = acq32_waitAuxMessage( device, timeout );
     
