@@ -273,13 +273,14 @@ static int acq32_map_target_pci( struct Acq32Device* device )
      * ROM area is mapped over RAM area, and driver controls access
      * this always works, not all BIOS' map our ROM
      */    
-#ifdef LINUX_NEW_PCI    
-    device->p_pci->resource[PCI_ROM_RESOURCE].start = 
+#ifdef LINUX_NEW_PCI
+    device->p_pci->resource[PCI_ROM_RESOURCE].start =
 #else
-        device->p_pci->rom_address =   
-#endif    
+        device->p_pci->rom_address =
+#endif
         device->ram.pa;
     device->rom.va  = device->ram.va;
+    device->rom.pa  = device->ram.pa;	/* same physical addr by chip aliasing */
 
 
     PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "csr",device->csr.pa,device->csr.va);
