@@ -264,69 +264,24 @@ int acq32_userTargetAccessWrite32(
 static int acq32_map_target_pci( struct Acq32Device* device )
 {
     int rc = 0;                /* assume success until fail */
-    unsigned long rom_pa;
-    unsigned long rom_len;
-
+    
     if ( (rc = acq32_makeIoMapping( device, PCI_BA_CSR )) != 0 ||
          (rc = acq32_makeIoMapping( device, PCI_BA_SDRAM )) != 0  ){
         return rc;
     }
-
     /*
-     * === ROM MAPPING: 2026 refactor — see NOTE below to revert. ===
-     *
-     * The 2.4 driver "aliased" ROM onto the SRAM BAR by rewriting
-     * PCI_ROM_ADDRESS to match BAR 2 and, at each ROM-enable, pushing
-     * BAR 2 out of the way to a bogus BADMAP address (0x8beef000).  The
-     * comment above the original block explained that this was for
-     * BIOSes that did not allocate a ROM BAR at all.  Under 2.6 the
-     * kernel does allocate a ROM BAR for this device, and rewriting
-     * BAR 2 behind the kernel's back appears not to take effect
-     * reliably — the chip stayed in SRAM mode during the "ROM read
-     * window" and the firmware-ID strings never came back.
-     *
-     * The modern approach used here: ioremap the actual ROM BAR at
-     * the kernel-assigned address (visible as "Expansion ROM at ..."
-     * in lspci).  acq32_enable_rom() then only needs to flip
-     * PCI_ROM_ADDRESS_ENABLE; it no longer moves BAR 2.
-     *
-     * REVERT PLAN (only if a system's BIOS/PCI enumeration produces
-     * a zero-sized/absent ROM BAR):
-     *   - restore the three lines that assigned
-     *       device->p_pci->resource[PCI_ROM_RESOURCE].start = device->ram.pa;
-     *       device->rom.va  = device->ram.va;
-     *       device->rom.pa  = device->ram.pa;
-     *   - restore acq32_enable_rom() to its BAR-swap form
-     *     (write PCI_BASE_ADDRESS_2 = BADMAP on enable, restore on disable).
-     * The old code is preserved verbatim in commit history so a
-     * `git show <this commit>^ -- acq32_specific.c` gives the pre-
-     * refactor version.
-     */
-    rom_pa  = pci_resource_start( device->p_pci, PCI_ROM_RESOURCE );
-    rom_len = pci_resource_len( device->p_pci, PCI_ROM_RESOURCE );
+     * ROM area is mapped over RAM area, and driver controls access
+     * this always works, not all BIOS' map our ROM
+     */    
+#ifdef LINUX_NEW_PCI
+    device->p_pci->resource[PCI_ROM_RESOURCE].start =
+#else
+        device->p_pci->rom_address =
+#endif
+        device->ram.pa;
+    device->rom.va  = device->ram.va;
+    device->rom.pa  = device->ram.pa;	/* same physical addr by chip aliasing */
 
-    if ( rom_pa == 0 || rom_len == 0 ){
-        dev_warn(&device->p_pci->dev,
-                 "PCI_ROM_RESOURCE has no BAR (start=0x%08lx len=%lu); "
-                 "firmware-ID ROM reads will not work.  If your kernel "
-                 "leaves this BAR unassigned, restore the 2.4-era ROM/SRAM "
-                 "aliasing in acq32_map_target_pci (see NOTE in source).\n",
-                 rom_pa, rom_len);
-        device->rom.va = NULL;
-        device->rom.pa = 0;
-        device->rom.len = 0;
-    } else {
-        sprintf(device->rom.name, "acq32.%d.rom",
-                acq32_get_board_from_device(device));
-        device->rom.pa  = rom_pa & PCI_BASE_ADDRESS_MEM_MASK;
-        device->rom.len = rom_len;
-        device->rom.va  = ioremap_nocache(device->rom.pa, device->rom.len);
-        if ( !device->rom.va ){
-            dev_err(&device->p_pci->dev,
-                    "ROM ioremap 0x%08lx %d failed\n",
-                    device->rom.pa, device->rom.len);
-        }
-    }
 
     PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "csr",device->csr.pa,device->csr.va);
     PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "ram",device->ram.pa,device->ram.va);
@@ -644,32 +599,40 @@ static void unprintable_as_dots( char string[] )
 
 void acq32_enable_rom( struct Acq32Device* device, int enable )
 {
-    /*
-     * === 2026 refactor — see NOTE in acq32_map_target_pci to revert. ===
-     *
-     * Previous form moved BAR 2 (SRAM) out to BADMAP so ROM could take
-     * over the same PCI address, then restored BAR 2 on disable.  That
-     * BAR-swap didn't take reliably under the 2.6 PCI subsystem and
-     * left the chip in SRAM mode during the "ROM read window".  Now
-     * that ROM has its own ioremap at its real PCI_ROM_RESOURCE
-     * address, we only need to flip the ENABLE bit on PCI_ROM_ADDRESS
-     * for the chip to respond from ROM at that BAR.
-     */
-    u32 rom_addr;
+#ifdef LINUX_NEW_PCI
+    unsigned long rom_addr = device->p_pci->resource[PCI_ROM_RESOURCE].start;
+#else
+    unsigned long rom_addr = device->p_pci->rom_address;
+#endif    
+    unsigned long ram_addr;
 
-    device->m_dpd.rom_is_enabled = enable;
-
-    pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr);
-    if (enable) {
+    if ( (device->m_dpd.rom_is_enabled = enable) ){
         rom_addr |= PCI_ROM_ADDRESS_ENABLE;
-    } else {
+        ram_addr = BADMAP;
+    }else{
         rom_addr &= ~PCI_ROM_ADDRESS_ENABLE;
+#ifdef LINUX_NEW_PCI    
+        ram_addr = device->pci_stash.resource[PCI_BA_SDRAM].start;
+#else
+        ram_addr = device->pci_stash.base_address[PCI_BA_SDRAM];
+#endif   
     }
-    pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS, rom_addr);
 
-    PDEBUGL(2)(" PCI_ROM_ADDRESS <- 0x%08x (%s)\n",
-               rom_addr, enable? "ENABLE": "DISABLE");
-    PDEBUGL(2)(" it's done now ...\n");
+    PDEBUGL(2)( " setting PCI_BA_SDRAM    to 0x%08lx (%s)\n",
+                ram_addr, enable? "FARAWAY": "IN" );
+    PDEBUGL(2)( " setting PCI_ROM_ADDRESS to 0x%08lx (%s)\n",
+                rom_addr, enable? "ENABLE": "DISABLE" );
+                        
+    {
+        /* pcibios_write_config_dword() was removed in 2.6; use the
+         * modern pci_dev-based API. */
+        unsigned long flags;
+        local_irq_save(flags);
+        pci_write_config_dword(device->p_pci, PCI_BASE_ADDRESS_2, ram_addr);
+        pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS,    rom_addr);
+        local_irq_restore(flags);
+    }
+    PDEBUGL(2) ( " it's done now ...\n" );
 }
 
 
