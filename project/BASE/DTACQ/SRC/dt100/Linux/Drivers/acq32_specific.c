@@ -302,15 +302,26 @@ static int acq32_map_target_pci( struct Acq32Device* device )
      * `git show <this commit>^ -- acq32_specific.c` gives the pre-
      * refactor version.
      */
-    rom_pa  = pci_resource_start( device->p_pci, PCI_ROM_RESOURCE );
-    rom_len = pci_resource_len( device->p_pci, PCI_ROM_RESOURCE );
+    rom_pa    = pci_resource_start( device->p_pci, PCI_ROM_RESOURCE );
+    rom_len   = pci_resource_len( device->p_pci, PCI_ROM_RESOURCE );
+    {
+        unsigned long rom_flags =
+            pci_resource_flags( device->p_pci, PCI_ROM_RESOURCE );
+        u32 rom_addr_reg;
+        pci_read_config_dword( device->p_pci, PCI_ROM_ADDRESS, &rom_addr_reg );
+        dev_info(&device->p_pci->dev,
+                 "ROM BAR: start=0x%08lx len=%lu flags=0x%08lx "
+                 "PCI_ROM_ADDRESS=0x%08x  (csr.pa=0x%08lx ram.pa=0x%08lx)\n",
+                 rom_pa, rom_len, rom_flags, rom_addr_reg,
+                 device->csr.pa, device->ram.pa);
+    }
 
     if ( rom_pa == 0 || rom_len == 0 ){
         dev_warn(&device->p_pci->dev,
                  "PCI_ROM_RESOURCE has no BAR (start=0x%08lx len=%lu); "
-                 "firmware-ID ROM reads will not work.  If your kernel "
-                 "leaves this BAR unassigned, restore the 2.4-era ROM/SRAM "
-                 "aliasing in acq32_map_target_pci (see NOTE in source).\n",
+                 "ROM reads will be skipped.  Restore the 2.4-era ROM/SRAM "
+                 "aliasing in acq32_map_target_pci if your kernel doesn't "
+                 "assign this BAR (see NOTE in source).\n",
                  rom_pa, rom_len);
         device->rom.va = NULL;
         device->rom.pa = 0;
@@ -320,17 +331,26 @@ static int acq32_map_target_pci( struct Acq32Device* device )
                 acq32_get_board_from_device(device));
         device->rom.pa  = rom_pa & PCI_BASE_ADDRESS_MEM_MASK;
         device->rom.len = rom_len;
+        dev_info(&device->p_pci->dev,
+                 "ROM ioremap: about to ioremap_nocache(0x%08lx, %d)\n",
+                 device->rom.pa, device->rom.len);
         device->rom.va  = ioremap_nocache(device->rom.pa, device->rom.len);
         if ( !device->rom.va ){
             dev_err(&device->p_pci->dev,
-                    "ROM ioremap 0x%08lx %d failed\n",
+                    "ROM ioremap 0x%08lx %d FAILED — ROM reads disabled\n",
                     device->rom.pa, device->rom.len);
+        } else {
+            dev_info(&device->p_pci->dev,
+                     "ROM ioremap OK: pa=0x%08lx len=%d va=%p\n",
+                     device->rom.pa, device->rom.len, device->rom.va);
         }
     }
 
-    PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "csr",device->csr.pa,device->csr.va);
-    PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "ram",device->ram.pa,device->ram.va);
-    PDEBUGL(2)(" %4s p 0x%08lx v %p\n", "rom",device->rom.pa,device->rom.va);
+    dev_info(&device->p_pci->dev,
+             "map done: csr pa=0x%08lx va=%p / ram pa=0x%08lx va=%p / rom pa=0x%08lx va=%p\n",
+             device->csr.pa, device->csr.va,
+             device->ram.pa, device->ram.va,
+             device->rom.pa, device->rom.va);
 
     return rc;
 }
@@ -655,21 +675,31 @@ void acq32_enable_rom( struct Acq32Device* device, int enable )
      * address, we only need to flip the ENABLE bit on PCI_ROM_ADDRESS
      * for the chip to respond from ROM at that BAR.
      */
-    u32 rom_addr;
+    u32 rom_addr_before, rom_addr_after, rom_addr_readback;
+
+    /* If the kernel never gave us a ROM BAR, there is nothing to toggle
+     * and touching PCI_ROM_ADDRESS could put the chip in a bad state. */
+    if ( device->rom.va == NULL ){
+        dev_warn(&device->p_pci->dev,
+                 "acq32_enable_rom(%s) skipped: no ROM mapping\n",
+                 enable ? "ENABLE" : "DISABLE");
+        return;
+    }
 
     device->m_dpd.rom_is_enabled = enable;
 
-    pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr);
-    if (enable) {
-        rom_addr |= PCI_ROM_ADDRESS_ENABLE;
-    } else {
-        rom_addr &= ~PCI_ROM_ADDRESS_ENABLE;
-    }
-    pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS, rom_addr);
+    pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr_before);
+    rom_addr_after = enable
+        ? (rom_addr_before |  PCI_ROM_ADDRESS_ENABLE)
+        : (rom_addr_before & ~PCI_ROM_ADDRESS_ENABLE);
+    pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS, rom_addr_after);
+    pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr_readback);
 
-    PDEBUGL(2)(" PCI_ROM_ADDRESS <- 0x%08x (%s)\n",
-               rom_addr, enable? "ENABLE": "DISABLE");
-    PDEBUGL(2)(" it's done now ...\n");
+    dev_info(&device->p_pci->dev,
+             "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> wrote 0x%08x -> reads 0x%08x%s\n",
+             enable ? "ENABLE" : "DISABLE",
+             rom_addr_before, rom_addr_after, rom_addr_readback,
+             (rom_addr_readback == rom_addr_after) ? "" : "  *MISMATCH*");
 }
 
 
@@ -825,7 +855,7 @@ acq32_getCalInfo( struct Acq32Device* device, char client_buf[], int nbuf )
     trim( client_buf );
 }
 
-static int acq32_getBlankDef( 
+static int acq32_getBlankDef(
 	struct Acq32Device* device,
 	struct Acq32ImagesDef* id
 	)
@@ -836,6 +866,16 @@ static int acq32_getBlankDef(
 		int rom_was_enabled = device->m_dpd.rom_is_enabled;
 		char testbuf[NBLANK];
 		char blankbuf[NBLANK];
+
+		/* Defensive: after the ROM-BAR refactor, rom.va may legitimately
+		 * be NULL if the kernel didn't allocate a PCI_ROM_RESOURCE for
+		 * this device.  Reading through a NULL rom_bytes would OOPS. */
+		if ( rom_bytes == NULL ){
+			dev_warn(&device->p_pci->dev,
+				 "getBlankDef: rom.va is NULL; treating as blank\n");
+			strcpy( id->model, "BLANK" );
+			return 1;
+		}
 
 		memset( blankbuf, 0xff, sizeof(blankbuf) );
 
