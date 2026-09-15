@@ -16,6 +16,10 @@ modules.order
 /graft/
 .ignore
 
+# ─── install staging (created by `make install` — Drivers/Makefile DTLBIN + MODULES) ───
+/bin/
+/modules/
+
 # ─── compiled binaries (per-subdir) ───
 API/dt100test
 
