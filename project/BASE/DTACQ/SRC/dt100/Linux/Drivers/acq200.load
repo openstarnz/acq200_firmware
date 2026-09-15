@@ -54,12 +54,12 @@ slotbased="slotbased"
 #slotbased="resourcebased"
 
 # script root procroot model slotbased [test]
-./acq32-mknod.pl $root /proc acq200 $slotbased
+./acq32-mknod.pl "$root" /proc acq200 "$slotbased"
 
 chgrp $group $root/$device* /dev/acq200/*
 chmod $mode  $root/$device* /dev/acq200/*
 
-./acq32-init.pl $root /proc acq200 $slotbased
+./acq32-init.pl "$root" /proc acq200 "$slotbased"
 
 
 

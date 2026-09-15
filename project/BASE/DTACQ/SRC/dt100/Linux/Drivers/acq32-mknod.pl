@@ -8,15 +8,15 @@ $REVID = '$Revision: 1.30.4.5 $';
 print "acq32-mknod $REVID - signing on\n";
 
 
-if ($#ARGV < 3 ){
-    die "acq32-mknod.pl new calling convention root procroot model slot\n";
+if ($#ARGV < 2 ){
+    die "acq32-mknod.pl new calling convention root procroot model [slot [test]]\n";
 }
 
 $root     = $ARGV[0];
 $procroot = $ARGV[1];
 $model    = $ARGV[2];
-$slotbased= $ARGV[3];
-$test     = $ARGV[4] eq "test";
+$slotbased= defined $ARGV[3] ? $ARGV[3] : "";
+$test     = (defined $ARGV[4] && $ARGV[4] eq "test");
 
 print "acq32-mknod.pl:root=$root procroot=$procroot model=$model ".
       "slotbased=$slotbased\n";
@@ -229,14 +229,9 @@ foreach $refb ( @DEVRECS ) {
 close JF;
 
 if ( !$test ){
-# Capture sh's stdout+stderr so we can see WHY the job file misbehaves
-# when perl runs it (only 2 nodes get created) but succeeds when run
-# manually with sh (all 130 nodes get created).  Shell metachars
-# ('>', '2>&1') force perl to use "sh -c".
-my $rc = system( "sh $JFN >/tmp/acq32.job.out 2>&1" );
-print "mknod job: system returned $rc\n";
-print "mknod job: node count after: ", `ls /dev/acq32/ 2>/dev/null | wc -l`;
-print "mknod job: last 40 lines of output:\n";
-system( "tail -40 /tmp/acq32.job.out" );
-$rc == 0 or die "ERROR: jobfile failed";
+# Invoke the job file via an explicit /bin/sh.  Without a shebang,
+# execvp would silently fall back to sh on ENOEXEC; being explicit is
+# unambiguous and portable.
+system( "sh", $JFN ) == 0
+   or die "ERROR: jobfile failed";
 }

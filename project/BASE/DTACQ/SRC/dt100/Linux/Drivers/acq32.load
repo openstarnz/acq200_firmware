@@ -43,10 +43,10 @@ replace_dir $root
 slotbased=`./cmdline_lookup acq32.load_order`
 
 # script root procroot model slotbased [test]
-./acq32-mknod.pl $root /proc acq32 $slotbased
+./acq32-mknod.pl "$root" /proc acq32 "$slotbased"
 
 chmod -R $mode $root
-./acq32-init.pl $root /proc acq32 $slotbased
+./acq32-init.pl "$root" /proc acq32 "$slotbased"
 
 
 

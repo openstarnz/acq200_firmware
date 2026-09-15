@@ -12,8 +12,8 @@ $FIRST_BOARD=0;     ;#set to 1 to make first board the crate master
 $root     = $ARGV[0];
 $procroot = $ARGV[1];
 $model    = $ARGV[2];
-$slotbased= $ARGV[3];
-$test     = $ARGV[4] eq "test";
+$slotbased= defined $ARGV[3] ? $ARGV[3] : "";
+$test     = (defined $ARGV[4] && $ARGV[4] eq "test");
 
 
 print "acq32-init.pl $REVID - signing on slotbased $slotbased :";
