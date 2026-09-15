@@ -33,7 +33,7 @@ echo "acq32 driver custom prams $acq32_prams $acq32_boot_prams"
 
 # load driver here, quit on fault
 
-/sbin/insmod acq32-drv.o $acq32_prams $acq32_boot_prams $* || exit 1
+/sbin/insmod acq32-drv.ko $acq32_prams $acq32_boot_prams $* || exit 1
 
 
 # and now build all the device nodes
