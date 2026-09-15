@@ -33,7 +33,7 @@ Drivers/reset-driver
 Apps/BIGDUMPTEST/bdt
 
 Apps/CAL/MakeCalBin
-Apps/CAL/acq16tobin
+# acq16tobin is a perl script (source, not a build product) — kept tracked
 Apps/CAL/atweak
 Apps/CAL/diags
 Apps/CAL/mbox

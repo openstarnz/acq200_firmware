@@ -21,7 +21,7 @@ APPS = mean atweak mbox mmap diags MakeCalBin acq16tobin
 
 all: .depend $(APPS)
 
-release: all
+release install: all
 	cp $(APPS) ../../bin
 
 

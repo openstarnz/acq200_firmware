@@ -1,0 +1,157 @@
+#!/usr/bin/perl
+# reads volt offset values and prints as raw binary offsets.
+# pipeline:
+# acq16 offset cal | acq16tobin | makeCalBin
+
+print $ENV{HOME};
+use lib "$ENV{HOME}/modules";
+use getBoards;
+
+$bn       = $ARGV[0];
+$boxcar   = $ARGV[1];
+$slotbased= 0;
+
+$bn or die "usage acq16tobin bn [boxcar-order]";
+
+
+$nboards = getBoards( '/proc/acq32', $slotbased, 0 );
+
+$nboards or die "ERROR: no boards found";
+
+$found = 0;
+
+$refb = 0;
+
+FOUND: foreach $_refb ( @DEVRECS ) {
+    if ( $_refb->{lognum} == $bn ){
+	$found = 1;
+	$refb = $_refb;
+	last FOUND;
+    }
+}
+
+$found or die "record for board $bn not found\n";
+
+
+print "board $bn channels $refb->{num_channels}\n";
+
+system( "acqcmd -b $bn setMode SOFT_TRANSIENT 16384" );
+system( "acqcmd -b $bn setInternalClock 1000000" );
+system( "acqcmd -b $bn setArm" );
+system( "acqcmd -b $bn getNumSamples" );
+
+
+$RAW = "cat /dev/acq32/acq32.$bn.XX |";
+$COOK= "mean --dec --nchannels $refb->{num_channels} --fractional_bits 0";
+
+open DATA, $RAW.$COOK."|" or die "failed start cooking pipline\n";
+
+@offsets = 0;
+$data = <DATA>;
+
+$ii = 0;
+
+$binary = 1;
+
+open OFFSETS, ">$refb->{serial_num}.txt" or 
+    die "failed to open $refb->{serial_num}.txt";
+
+while ( $data =~ /([\d\.\-]+)/g ){
+#	print "found $1\n";
+	$offsets[$ii++] = $1;
+}
+
+for ( $jj = 0; $jj != $ii; ++$jj ){
+    if ( $binary ) {
+	$raw2 = $offsets[$jj];
+    }else{
+	$raw = $offsets[$jj] * 32768 / 2.5;
+	if ( $raw < 0 ){
+		$raw2 = $raw - 0.5;
+	}else{
+		$raw2 = $raw + 0.5;
+	}
+#	printf ( "$jj $offsets[$jj] $raw 0x%08x\n", $raw2 );
+    }
+    printf OFFSETS ( "0x%08x\n", $raw2 );
+}
+
+# now keep MakeCalBin happy by padding to 32 channels
+
+for ( ; $jj != 16; ++$jj ){
+    printf OFFSETS ( "0x%08x\n", 0 );
+}
+
+for ( ; $jj != 32; ++$jj ){
+	printf OFFSETS ( "0x%08x\n", 0xdeadbeef );
+}
+
+close OFFSETS;
+
+# make the cal data file
+
+$makeCalBin="MakeCalBin -s $refb->{serial_num} $refb->{serial_num}.txt";
+
+print "run:$makeCalBin\n";
+
+system( $makeCalBin );
+
+
+sub makeEnvModule {
+    my $envname = "$refb->{serial_num}.a16O.";
+
+    if ( $boxcar ){
+	$envname .= "bc$boxcar";
+    }
+    my $envnamesrc = $envname.".env";
+
+    open ENV, ">$envnamesrc" or die "FAILED to open $envnamesrc";
+
+    print ENV ( "InvertedInputs=0\n" );
+    print ENV ( "Acq16OffsetAdjust=1\n" );
+    if ( boxcar ){
+	print ENV ( "PostProcessCommand=BoxCar,$boxcar\n" );
+    }
+    close ENV;
+
+    $makeCalBin="MakeCalBin -s $envname --text <$envnamesrc";
+    print "run:$makeCalBin";
+    system( $makeCalBin );
+
+    print ( "Environment set in $envnamesrc\n" );
+
+    return $envname;
+}
+
+$envname = makeEnvModule;
+
+$JOBFILE='/tmp/acq16cal.job';
+open JOB, ">$JOBFILE" or die "failed to open /tmp/acq16cal.job";
+
+print JOB ("./load-acq16.all $bn=$refb->{serial_num}/$refb->{num_channels}\n");
+print JOB ( "pfmu -b $bn 'p 3 $envname $envname.axf 17'\n" );
+print JOB ( "pfmu -b $bn list\n" );
+
+close JOB;
+
+system( "chmod u+rx $JOBFILE" );
+
+sub flashPromptInput {
+    print( '-'x80 . "\n" );
+    print( "[1] cat $JOBFILE\n" );
+    print( "[2] cat $refb->{serial_num}.txt\n" );
+    print( "[3] proceed with upgrade\n" );
+    print( "[90] cat $envname.env\n" );
+    print( "[99] abort\n" );
+    return <STDIN>;
+}
+
+GETKEY: while ( $_ = flashPromptInput ) {
+    if ( /^1/ ) { system( "cat $JOBFILE\n" ); next GETKEY; }
+    if ( /^2/ ) { system( "cat $refb->{serial_num}.txt\n" ); next GETKEY; }
+    if ( /^3/ ) { system( "$JOBFILE" ); last GETKEY; }
+    if ( /^90/ ){ system( "cat $envname.env\n" ); next GETKEY; }
+    if ( /^99/ ){ exit; }
+    print "sorry, not \"$_\" please try again\n";	
+}
+
