@@ -498,6 +498,16 @@ static irqreturn_t acq32_isr( int irq, void* dev_id )
 
 	status = readl(CSR(device, PCI_OUT_INT_STATUS));
 
+	/* All-ones (0xFFFFFFFF) is the master-abort signature of an
+	 * unresponsive PCI device: the bus retries and returns all 1s
+	 * when the target doesn't ack.  Under shared IRQs a dead chip
+	 * would otherwise be treated as "we have an interrupt", chased
+	 * through the doorbell/i2o handlers, and eventually corrupt
+	 * something.  Treat it as not-ours. */
+	if ( status == 0xffffffff ) {
+		return IRQ_NONE;
+	}
+
 	if ( status != 0 ) {
 
 		PDEBUGL(3)( "\n" );

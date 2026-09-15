@@ -900,6 +900,13 @@ static irqreturn_t acq200_isr(int irq, void* dev_id)
 	u32 status = readl(CSR(device, ACQ200_OISR));
 #define OIMR 3 	 /* OIMR bits not interesting, and masked so not int */
 
+	/* 0xFFFFFFFF is the "device didn't ack" signature — treat as
+	 * not-ours under shared IRQs rather than chase pointers into
+	 * an unresponsive chip. */
+	if (status == 0xffffffff) {
+		return IRQ_NONE;
+	}
+
 	if ((status & ~OIMR) == 0){
 		return IRQ_NONE;
 	}
