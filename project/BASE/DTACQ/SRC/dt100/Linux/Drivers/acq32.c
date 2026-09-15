@@ -988,16 +988,23 @@ int acq32_read_proc(
 	    heartbeat = acq32_getHeartbeat( device );
 	}
 
-	len += PRINTF( ACQ32_FORMATD, 
-		       id.model,
+	/* getBoards.pm's regex requires a non-empty [\w-]+ token in
+	 * every column.  If the chip returned empty/dots strings for
+	 * any firmware ID field, substitute "-" so the perl parser
+	 * still emits a device record and mknod can create /dev nodes.
+	 * "." (dot) is not in [\w-], so a dot-string counts as empty. */
+#define NZ(s) (((s)[0] && (s)[0] != '.') ? (s) : "-")
+	len += PRINTF( ACQ32_FORMATD,
+		       NZ(id.model),
 		       idev,
-		       id.channels,
-		       id.serialnum,
-		       id.armfw,
-		       id.lcafw,
-		       id.caldate,
+		       NZ(id.channels),
+		       NZ(id.serialnum),
+		       NZ(id.armfw),
+		       NZ(id.lcafw),
+		       NZ(id.caldate),
 		       cycle,
 		       heartbeat );
+#undef NZ
 	if ( len > LIMIT ){
 	    break;
 	}
