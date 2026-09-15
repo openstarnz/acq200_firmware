@@ -1,4 +1,0 @@
-dt100api.o: dt100api.c ../../../include/local.h ../../include/dt100api.h \
-  ../include/acq32ioctl.h
-dt100test.o: dt100test.c ../../../include/local.h \
-  ../../include/dt100api.h ../include/acq32ioctl.h

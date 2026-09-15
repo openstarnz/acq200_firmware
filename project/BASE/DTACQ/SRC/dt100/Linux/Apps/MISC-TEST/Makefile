@@ -24,7 +24,7 @@ release install: all
 	cp $(APPS) ../../bin
 
 depend .depend dep:
-	$(CC) $(CPPFLAGS) -M *.c >> $@
+	$(CC) $(CPPFLAGS) -M *.c > $@
 
 
 acq32command: acq32command.o

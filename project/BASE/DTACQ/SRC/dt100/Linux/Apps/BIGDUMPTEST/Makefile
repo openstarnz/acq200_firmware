@@ -25,7 +25,7 @@ release install: all
 	cp bdt ../../bin
 
 depend .depend dep:
-	$(CC) $(CPPFLAGS) -M *.c >> $@
+	$(CC) $(CPPFLAGS) -M *.c > $@
 
 
 bdt: bdt.o

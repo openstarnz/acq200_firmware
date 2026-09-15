@@ -38,7 +38,7 @@ diags: diags.o
 	$(LINK.c) -o $@ $^ -lpopt
 
 depend .depend dep:
-	$(CC) $(CPPFLAGS) -M *.c >> $@
+	$(CC) $(CPPFLAGS) -M *.c > $@
 
 mmap: mmap.o
 	$(LINK.c) -o $@ $^ -lpopt
