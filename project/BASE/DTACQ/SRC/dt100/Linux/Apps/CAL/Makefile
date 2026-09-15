@@ -17,12 +17,15 @@ DTLINC= ../../include
 CPPFLAGS =  -Wall $(DEBFLAGS)
 CPPFLAGS += -I$(INCLUDEDIR) -I${DTINC} -I${DTLINC}
 
-APPS = mean atweak mbox mmap diags MakeCalBin acq16tobin
+APPS    = mean atweak mbox mmap diags MakeCalBin
+# acq16tobin is a perl script (source, not a build product) — installed
+# alongside the built APPS but excluded from clean so we don't delete it.
+SCRIPTS = acq16tobin
 
 all: .depend $(APPS)
 
-release: all
-	cp $(APPS) ../../bin
+release install: all
+	cp $(APPS) $(SCRIPTS) ../../bin
 
 
 mean: mean.o
@@ -38,15 +41,12 @@ diags: diags.o
 	$(LINK.c) -o $@ $^ -lpopt
 
 depend .depend dep:
-	$(CC) $(CPPFLAGS) -M *.c >> $@
+	$(CC) $(CPPFLAGS) -M *.c > $@
 
 mmap: mmap.o
 	$(LINK.c) -o $@ $^ -lpopt
 
-acq16tobin:
-	echo no action needed for acq16tobin
-
-clean: 
+clean:
 	rm -f $(APPS)
 	rm -f *.o
 	rm -f .depend

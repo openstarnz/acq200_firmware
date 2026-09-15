@@ -1,2 +1,0 @@
-acq32dump.o: acq32dump.c ../../../../include/local.h \
-  ../../include/acq32ioctl.h

@@ -79,7 +79,7 @@ release install: all
 	cp $(APPS) ../../bin
 
 depend .depend dep:
-	$(CC) $(CPPFLAGS) -M *.c* >> .depend
+	$(CC) $(CPPFLAGS) -M *.c* > .depend
 
 
 htstream.orig: $(OBJS)

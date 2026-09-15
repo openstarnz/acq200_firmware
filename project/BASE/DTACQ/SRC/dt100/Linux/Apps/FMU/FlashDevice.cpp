@@ -194,6 +194,7 @@ void Board::Register( FlashDevice* flash_device )
  */
 FlashDevice::FlashDevice( const BlockDef *const pBlockDef ) :
     m_p_base( 0 ),
+    m_p_csr( 0 ),
     is_class_leader( true ),
     m_pBlockDef( pBlockDef ),
     main_id( 0 )
