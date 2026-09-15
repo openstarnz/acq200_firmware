@@ -188,7 +188,7 @@ foreach $refb ( @DEVRECS ) {
 	}
     }
 
-    printf JF ( '# make potential masters for all boards from our number on' );
+    printf JF ( "# make potential masters for all boards from our number on\n" );
 
     my $got_to_me = 0;
     $scode = 0;
@@ -229,11 +229,13 @@ foreach $refb ( @DEVRECS ) {
 close JF;
 
 if ( !$test ){
-@args = ( "chmod", "u+x", "$JFN" );
-system( @args ) == 0 
-   or die "ERROR: failed chmod";
-
-@args = ( "$JFN" );
-system( @args ) == 0 
+# Invoke the job file explicitly via /bin/sh rather than exec'ing the
+# unshebanged file directly.  Perl's system() with a single scalar
+# calls execvp, which for a script without "#!" relies on the ENOEXEC
+# fallback to sh — that fallback silently swallows most of the script
+# on some setups (only the first couple of mknods survive).  Running
+# it under sh explicitly is unambiguous and portable.
+@args = ( "sh", "$JFN" );
+system( @args ) == 0
    or die "ERROR: jobfile failed";
 }
