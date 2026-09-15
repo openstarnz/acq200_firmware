@@ -229,13 +229,14 @@ foreach $refb ( @DEVRECS ) {
 close JF;
 
 if ( !$test ){
-# Invoke the job file explicitly via /bin/sh rather than exec'ing the
-# unshebanged file directly.  Perl's system() with a single scalar
-# calls execvp, which for a script without "#!" relies on the ENOEXEC
-# fallback to sh — that fallback silently swallows most of the script
-# on some setups (only the first couple of mknods survive).  Running
-# it under sh explicitly is unambiguous and portable.
-@args = ( "sh", "$JFN" );
-system( @args ) == 0
-   or die "ERROR: jobfile failed";
+# Capture sh's stdout+stderr so we can see WHY the job file misbehaves
+# when perl runs it (only 2 nodes get created) but succeeds when run
+# manually with sh (all 130 nodes get created).  Shell metachars
+# ('>', '2>&1') force perl to use "sh -c".
+my $rc = system( "sh $JFN >/tmp/acq32.job.out 2>&1" );
+print "mknod job: system returned $rc\n";
+print "mknod job: node count after: ", `ls /dev/acq32/ 2>/dev/null | wc -l`;
+print "mknod job: last 40 lines of output:\n";
+system( "tail -40 /tmp/acq32.job.out" );
+$rc == 0 or die "ERROR: jobfile failed";
 }
