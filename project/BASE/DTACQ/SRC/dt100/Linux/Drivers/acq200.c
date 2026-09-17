@@ -433,9 +433,16 @@ static void i2o_handleReadMessageFile(
 
 	dbg(2, "nsamples %d\n", nsamples);
 
-	/* clidata is a void* used to carry a 32 bit count.  Go via u32 so the
-	 * 0xffffffff error sentinel doesn't sign-extend on 64 bit - readers
-	 * compare against (void*)0xffffffff.
+	/* clidata is genuinely overloaded.  buildRch() parks the in-flight
+	 * struct IoMapping* (the kbuf) in it, and the readers in
+	 * acq200_bridge_read_generic()/acq200_fetchDataToLocalBuffer() wait on
+	 * "clidata != kbuf" to spot that this handler has run.  Only then is it
+	 * reused to hand back a 32 bit sample count, with 0xffffffff meaning
+	 * "no data".  So it carries a real pointer and a count at different
+	 * points in the same exchange - do not assume either one.
+	 *
+	 * Go via u32 so the 0xffffffff sentinel doesn't sign-extend on 64 bit:
+	 * the readers compare against (void*)0xffffffff.
 	 */
 	if (nsamples == 0xffffffff){
 		self->clidata = (void*)(unsigned long)(u32)nsamples;
