@@ -3085,6 +3085,25 @@ streaming_rowdev_read(
 
     return_count = acq32_streaming_rowdev_read_workfunc( device );
 
+    /*
+     * WORKTODO: this test is dead and is deliberately left dead.
+     *
+     * return_count is size_t (unsigned), so "return_count < 0" is provably
+     * always false and gcc optimises it out.  acq32_streaming_rowdev_read_workfunc()
+     * does return -ETIMEDOUT, and that error is therefore swallowed here:
+     * the -ETIMEDOUT is overwritten by device->appbuf.count_actual a few lines
+     * down, and userspace sees a short/zero read (EOF) rather than an error.
+     *
+     * DO NOT "tidy" this by widening return_count to ssize_t.  That looks like
+     * the obvious fix but it is a behaviour change in a live streaming path:
+     * readers that today treat a timeout as end-of-stream would start getting
+     * -ETIMEDOUT back from read(2).  Changing it needs the userspace side
+     * (see Apps/ stream readers) audited first.
+     *
+     * Note the %zu conversions in the PDEBUGL() calls below were added during
+     * the 2.6.32 port to match this size_t declaration, so they cement it -
+     * they have to change together with the type, not after it.
+     */
     if ( return_count < 0 ) return return_count;
 
     /*
