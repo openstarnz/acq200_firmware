@@ -433,14 +433,19 @@ static void i2o_handleReadMessageFile(
 
 	dbg(2, "nsamples %d\n", nsamples);
 
+	/* clidata is a void* used to carry a 32 bit count.  Go via u32 so the
+	 * 0xffffffff error sentinel doesn't sign-extend on 64 bit - readers
+	 * compare against (void*)0xffffffff.
+	 */
 	if (nsamples == 0xffffffff){
-		self->clidata = (void*)nsamples;
+		self->clidata = (void*)(unsigned long)(u32)nsamples;
 	}else{
-		self->clidata = (void*)(nsamples*2);
+		self->clidata = (void*)(unsigned long)(u32)(nsamples*2);
 	}
 	wake_up_interruptible(&self->path->return_waitq);
 }
 
+#ifdef PGMCOMOUT	/* only user is acq200_fetchDataToLocalBuffer(), below */
 static void i2o_handleReadMessage(
 	struct ReturnCommandHandler* self,
 	struct MESSAGE* response
@@ -455,10 +460,11 @@ static void i2o_handleReadMessage(
 
 	dbg(2, "nsamples %d\n", nsamples);
 
-	self->clidata = (void*)nsamples;
+	self->clidata = (void*)(unsigned long)(u32)nsamples;
 
 	wake_up_interruptible(&self->path->return_waitq);
 }
+#endif /* PGMCOMOUT */
 
 
 

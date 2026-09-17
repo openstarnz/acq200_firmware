@@ -1379,7 +1379,7 @@ static int do_bucket_command(
     const char* verb = argv[iarg];
 
     PDEBUGL(1)( " %s\n", argv[0] );
-    HELP_PRINTF_RET( (char*)0, (char*)argc );
+    HELP_PRINTF_RET( (char*)0, (char*)(unsigned long)argc );
     
     strcpy( reject_line, "ERROR in command:" );
     while( iarg != argc ){

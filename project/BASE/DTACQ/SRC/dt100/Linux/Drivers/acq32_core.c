@@ -1704,7 +1704,10 @@ void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa )
 
 		TIMESTAMP( device, 'i', "disc" );
         }else{
-		device->m_dpd.i2o_last_in = (void*)mfa;
+		/* mfa is a 32 bit device-side message frame address, kept in a
+		 * void* for the 0x%p debug report only - widen, don't truncate.
+		 */
+		device->m_dpd.i2o_last_in = (void*)(unsigned long)mfa;
 
 		device->m_dpd.streaming_message_delta_usecs =
 			acq32_getDeltaTime( 
