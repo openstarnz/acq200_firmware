@@ -872,12 +872,20 @@ void acq32_freePathDescriptor( struct Acq32Path* path )
 
 static void clearIoMapping( struct IoMapping* iomap, int is_rom )
 {
-    if ( !is_rom && iomap->va ){
+    /* Historically the is_rom flag caused iounmap to be skipped because
+     * rom.va was aliased to ram.va — unmapping twice would have been a
+     * double-free.  After the 2026 refactor rom.va is its own ioremap
+     * over the actual PCI_ROM_RESOURCE BAR, so it must be iounmap'd
+     * like any other mapping.  The is_rom parameter is kept for source
+     * compatibility but no longer changes behaviour.
+     * The matching release_mem_region() was removed when we switched
+     * to pci_request_regions() in probe/remove — those already release
+     * BARs 0..5; the ROM BAR (PCI_ROM_RESOURCE) is not claimed via
+     * request_regions, so no release_mem_region is needed for it. */
+    (void)is_rom;
+    if ( iomap->va ){
         iounmap( iomap->va );
     }
-    /* The matching release_mem_region() on each BAR was removed when
-     * we switched to pci_request_regions()/pci_release_regions() in
-     * probe/remove; re-releasing here would double-free the resource. */
     memset( iomap, 0, sizeof( struct IoMapping ) );
 }
 static void unmap_pci_memory( struct Acq32Device* device )
