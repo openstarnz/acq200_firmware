@@ -1375,20 +1375,34 @@ static int do_bucket_command(
     // chew up the rest of the args
 {
 //#define FN "do_bucket_command() "
-    char reject_line[80];
+    /*
+     * The rejected tokens all come out of the one command line, which
+     * _write_command() clamps to MAXCMDLINE-1 == 255 bytes, so the echo is at
+     * most 255 + one separator per token (MAXARGS is 10) + "ERROR in command:"
+     * + "(bucket)", i.e. under 292.  320 rounds that up, and matches the
+     * APR_PRINTF staging buffer.  (MAXCMDLINE/MAXARGS are defined further down
+     * this file, hence the literal.)
+     */
+    char reject_line[320];
     const char* verb = argv[iarg];
+    int len = 0;
 
     PDEBUGL(1)( " %s\n", argv[0] );
     HELP_PRINTF_RET( (char*)0, (char*)(unsigned long)argc );
-    
-    strcpy( reject_line, "ERROR in command:" );
+
+    /* scnprintf() returns what it actually stored, so len tracks the real
+     * length and can never walk off the end - strcpy()/strcat() here smashed
+     * the stack for any rejected command line over ~63 characters.
+     */
+    len += scnprintf( reject_line+len, sizeof(reject_line)-len,
+                      "ERROR in command:" );
     while( iarg != argc ){
-        strcat( reject_line, argv[iarg] );
-        strcat( reject_line, " " );
+        len += scnprintf( reject_line+len, sizeof(reject_line)-len,
+                          "%s ", argv[iarg] );
     	++iarg;
     }
-    strcat( reject_line, "(bucket)" );
-    acq32_path_readbuffer_put( PD(filp), reject_line, strlen(reject_line) );
+    len += scnprintf( reject_line+len, sizeof(reject_line)-len, "(bucket)" );
+    acq32_path_readbuffer_put( PD(filp), reject_line, len );
     
     PDEBUGL(1)( " returns %d\n", iarg );
 
