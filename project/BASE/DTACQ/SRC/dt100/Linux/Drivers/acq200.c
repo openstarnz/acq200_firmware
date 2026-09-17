@@ -357,7 +357,7 @@ int acq200_copy_from_io_to_user(
 	while( count > 0 ){
 		ncopy = min(count, LBUFLEN);
 		memcpy_fromio(tmp, src, ncopy);
-		copy_to_user(dst, tmp, ncopy);
+		UNCHECKED_COPY( copy_to_user(dst, tmp, ncopy) );
 		src += ncopy;
 		dst += ncopy;
 		count -= ncopy;
@@ -381,7 +381,7 @@ int acq200_copy_from_user_to_io(
 
 	while( count > 0 ){
 		ncopy = min(count, LBUFLEN);
-		copy_from_user(tmp, src, ncopy);
+		UNCHECKED_COPY( copy_from_user(tmp, src, ncopy) );
 		memcpy_toio(dst, tmp, ncopy);
 		src += ncopy;
 		dst += ncopy;

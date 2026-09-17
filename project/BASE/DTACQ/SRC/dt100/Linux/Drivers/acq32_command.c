@@ -3134,7 +3134,7 @@ static ssize_t _read_command(
         if ( nget == 0 ){
             break;
         }
-        copy_to_user( buf+nuser, lbuf, nget );
+        UNCHECKED_COPY( copy_to_user( buf+nuser, lbuf, nget ) );
         nuser += nget;
     }
    
@@ -3192,7 +3192,7 @@ ssize_t acq32_master_read (
                 PDEBUGL(3) ( "acq32_master_read flush done %d\n", nuser );
                 break;
             }else{
-                copy_to_user( buf+nuser, lbuf, nget );
+                UNCHECKED_COPY( copy_to_user( buf+nuser, lbuf, nget ) );
                 nuser += nget;
             }
         }
@@ -3227,7 +3227,7 @@ static int _write_command(
 
     count = MIN( MAXCMDLINE-1, count );
 
-    copy_from_user( kbuf, buf, count );
+    UNCHECKED_COPY( copy_from_user( kbuf, buf, count ) );
     kbuf[count] = '\0';
 
     PRINTCMD( "acq32:<", kbuf );

@@ -304,7 +304,7 @@ ssize_t sim_channel_read (
         }
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata.aline, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata.aline, add_chars ) );
             tcount += add_chars;
         }else{
             break;
@@ -417,7 +417,7 @@ ssize_t sim_streaming_rowdev_read (
 		    buf+tcount, kdata_bin, add_chars );
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata_bin, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata_bin, add_chars ) );
             tcount += add_chars;
         }else{
             break;
@@ -528,7 +528,7 @@ ssize_t sim_rowdev_read (
         ASSERT( add_chars < sizeof(kdata) );
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata.aline, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata.aline, add_chars ) );
             tcount += add_chars;
         }else{
             break;

@@ -1446,15 +1446,15 @@ int acq32_sendI2O( struct Acq32Path* path, struct MESSAGE* arg )
     PDEBUGL(2)( " call copy_from_user( %p %p %zu )\n", 
                 &message->header, arg, sizeof(Message) );
     
-    copy_from_user( &message->header, arg, sizeof(MessageHeader) );
+    UNCHECKED_COPY( copy_from_user( &message->header, arg, sizeof(MessageHeader) ) );
     
     ASSERT( message->header.length < sizeof(Message)-sizeof(MessageHeader) );
 
         
-    copy_from_user( 
+    UNCHECKED_COPY( copy_from_user( 
 	    &message->payload.cdata[0], 
 	    &arg->payload.cdata[0], 
-	    message->header.length );
+	    message->header.length ) );
     
     return acq32_sendI2O_kbuf( path, message );
 }
@@ -2806,7 +2806,7 @@ static ssize_t bin_buf_update(
     ssize_t tcount = max_samples*sample_size;
 
     TIMESTAMP( path->device, 1, "bin_buf_update( %d )", tcount );    
-    copy_to_user( buf, path->buffer.data+path->buffer.iget, tcount );
+    UNCHECKED_COPY( copy_to_user( buf, path->buffer.data+path->buffer.iget, tcount ) );
     path->buffer.iget += tcount;
 
     TIMESTAMP( path->device, 1, "bin_buf_update() - done" );
@@ -2900,7 +2900,7 @@ ssize_t acq32_channel_read (
             add_chars += termlen;
 
             if ( tcount+add_chars < count ){
-                copy_to_user( buf+tcount, kdata, add_chars );
+                UNCHECKED_COPY( copy_to_user( buf+tcount, kdata, add_chars ) );
                 tcount += add_chars;
                
                 PDEBUGL(6)( " copied, tcount now %zd\n", tcount );
@@ -3026,7 +3026,7 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
                                 ibuf, mfa, psrc[1], 
                                 device->appbuf.buf+ibuf, psrc+1, clenb  );
 
-                    copy_to_user( device->appbuf.buf+ibuf, psrc+1, clenb );
+                    UNCHECKED_COPY( copy_to_user( device->appbuf.buf+ibuf, psrc+1, clenb ) );
                 }       
 
                 acq32_timestamp( device, 'b', "cp ends" );
@@ -3207,7 +3207,7 @@ ssize_t acq32_row_read (
 
             if ( tcount+add_chars <= count ){
                 PDEBUGL(4)( "acq32_row_read copy %d\n", add_chars );
-                copy_to_user( buf+tcount, kstring, add_chars );
+                UNCHECKED_COPY( copy_to_user( buf+tcount, kstring, add_chars ) );
                 tcount += add_chars;
             }else{
                 acq32_discardLastData( path, last_len );
@@ -3551,7 +3551,7 @@ static int _acq32_fetchDataToLocalBuffer(
 
     if ( acq32_debug ){
 	    char buf[20];
-	    copy_from_user( buf, buffer, 20 );
+	    UNCHECKED_COPY( copy_from_user( buf, buffer, 20 ) );
 	    buf[19] = '\0';
 
 	    PDEBUGL(3)( "Contents of buffer now %s\n", buf );

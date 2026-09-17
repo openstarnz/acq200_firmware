@@ -1377,7 +1377,7 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
 
             struct READ_LOCALBUF_DESCR descr;
                 
-            copy_from_user( &descr, (void*)arg, sizeof(descr) );
+            UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
                 
             return dev->fetchDataToLocalBuffer( 
                 filp,
@@ -1507,7 +1507,7 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
 
             struct READ_LOCALBUF_DESCR descr;
                 
-            copy_from_user( &descr, (void*)arg, sizeof(descr) );
+            UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
                 
             return acq32_fetchDataToLocalBuffer( 
                 filp,
@@ -1822,7 +1822,7 @@ ssize_t linear_buffer_read(
         for ( ; (ncopy = MIN( count-running_count, sizeof(PD(filp)->scratch) )); 
               running_count += ncopy ){
             memcpy_fromio( PD(filp)->scratch, pkmem+f_pos+running_count, ncopy );
-            copy_to_user( buf+running_count, PD(filp)->scratch, ncopy );
+            UNCHECKED_COPY( copy_to_user( buf+running_count, PD(filp)->scratch, ncopy ) );
         }
     }
 
@@ -1996,7 +1996,7 @@ acq32_hostbuf_read ( struct file* filp, char* buf, size_t count, loff_t* posp )
 
 	if (pos < len){
 		len = min((int)count, len - pos);
-		copy_to_user(buf, myline + pos, len);
+		UNCHECKED_COPY( copy_to_user(buf, myline + pos, len) );
 		*posp += len;
 		return len;
 	}else{

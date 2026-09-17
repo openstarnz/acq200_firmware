@@ -919,6 +919,15 @@ extern int acq32_command_debug;
     acq32_path_readbuffer_put( path, local, strlen(local) ); \
 }
 
+/*
+ * 2.6 marks copy_to_user()/copy_from_user() __must_check.  This driver has
+ * ignored the byte-not-copied count since the 2.4 days; propagating -EFAULT
+ * instead would be a behaviour change in the read/write/ioctl paths, so the
+ * ports keeps the old behaviour and makes each site explicit and greppable.
+ * WORKTODO: audit these and return -EFAULT where the caller can cope.
+ */
+#define UNCHECKED_COPY( expr )   do { if ( (expr) ){ ; } } while( 0 )
+
 
 int acq32_path_readbuffer_is_empty( struct Acq32Path* path );
 
