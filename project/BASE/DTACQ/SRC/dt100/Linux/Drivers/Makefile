@@ -44,10 +44,9 @@ acq32-drv-y := $(acq32_shared_objs) acq32_mmap.o acq32.o acq32_specific.o
 
 acq200-drv-y := $(acq32_shared_objs) acq200_module.o acq200.o wavegen.o
 
-# acq200_module.c is a thin wrapper that #includes acq32.c with -DACQ200.
-# Only this object needs the define; the rest of the shared sources have no
-# ACQ200 conditionals (verified at port time).
-CFLAGS_acq200_module.o := -DACQ200
+# acq200_module.c is a thin wrapper that #defines ACQ200 itself and then
+# #includes acq32.c.  The rest of the shared sources have no ACQ200
+# conditionals (verified at port time), so nothing here needs -DACQ200.
 
 else
 # ============================================================

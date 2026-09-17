@@ -1396,7 +1396,7 @@ static Message* getMessageBuffer( struct Acq32Path* path )
     ASSERT( sizeof( struct Acq32Path ) < 4096 );    // keep it less than one page
     ASSERT( sizeof( path->scratch ) > sizeof(Message) );
     
-    PDEBUGL(2)("getMessageBuffer() sizeof struct Acq32Path:%d Message:%d\n", 
+    PDEBUGL(2)("getMessageBuffer() sizeof struct Acq32Path:%zu Message:%zu\n", 
                sizeof(struct Acq32Path), sizeof(Message) );
                     
     return (Message*)path->scratch;
@@ -1443,18 +1443,18 @@ int acq32_sendI2O( struct Acq32Path* path, struct MESSAGE* arg )
 {
     Message* message = getMessageBuffer( path );
 
-    PDEBUGL(2)( " call copy_from_user( %p %p %d )\n", 
+    PDEBUGL(2)( " call copy_from_user( %p %p %zu )\n", 
                 &message->header, arg, sizeof(Message) );
     
-    copy_from_user( &message->header, arg, sizeof(MessageHeader) );
+    UNCHECKED_COPY( copy_from_user( &message->header, arg, sizeof(MessageHeader) ) );
     
     ASSERT( message->header.length < sizeof(Message)-sizeof(MessageHeader) );
 
         
-    copy_from_user( 
+    UNCHECKED_COPY( copy_from_user( 
 	    &message->payload.cdata[0], 
 	    &arg->payload.cdata[0], 
-	    message->header.length );
+	    message->header.length ) );
     
     return acq32_sendI2O_kbuf( path, message );
 }
@@ -1704,7 +1704,10 @@ void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa )
 
 		TIMESTAMP( device, 'i', "disc" );
         }else{
-		device->m_dpd.i2o_last_in = (void*)mfa;
+		/* mfa is a 32 bit device-side message frame address, kept in a
+		 * void* for the 0x%p debug report only - widen, don't truncate.
+		 */
+		device->m_dpd.i2o_last_in = (void*)(unsigned long)mfa;
 
 		device->m_dpd.streaming_message_delta_usecs =
 			acq32_getDeltaTime( 
@@ -2721,7 +2724,7 @@ int acq32_WaitEvent( THIS, struct ACQ32_WAIT_DEF* wait_def )
 }
 
 
-struct Acq32MasterDriver* acq32_getDriver()
+struct Acq32MasterDriver* acq32_getDriver(void)
 {
     static struct Acq32MasterDriver _driver = {
         acq32_GetState,                 // GetState
@@ -2803,7 +2806,7 @@ static ssize_t bin_buf_update(
     ssize_t tcount = max_samples*sample_size;
 
     TIMESTAMP( path->device, 1, "bin_buf_update( %d )", tcount );    
-    copy_to_user( buf, path->buffer.data+path->buffer.iget, tcount );
+    UNCHECKED_COPY( copy_to_user( buf, path->buffer.data+path->buffer.iget, tcount ) );
     path->buffer.iget += tcount;
 
     TIMESTAMP( path->device, 1, "bin_buf_update() - done" );
@@ -2832,7 +2835,7 @@ ssize_t acq32_channel_read (
         return 0;
     }
 
-    PDEBUGL(3)( "acq32_channel_read count: %d %ld\n", count, f_pos );
+    PDEBUGL(3)( "acq32_channel_read count: %zu %ld\n", count, f_pos );
 
     max_samples = acq32_FetchData( path, f_pos, max_samples, channel );
 
@@ -2897,10 +2900,10 @@ ssize_t acq32_channel_read (
             add_chars += termlen;
 
             if ( tcount+add_chars < count ){
-                copy_to_user( buf+tcount, kdata, add_chars );
+                UNCHECKED_COPY( copy_to_user( buf+tcount, kdata, add_chars ) );
                 tcount += add_chars;
                
-                PDEBUGL(6)( " copied, tcount now %d\n", tcount );
+                PDEBUGL(6)( " copied, tcount now %zd\n", tcount );
 
             }else{
                 acq32_discardLastData( path, last_len );
@@ -2912,7 +2915,7 @@ ssize_t acq32_channel_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "acq32_channel_read returning %d f_pos %ld\n", 
+    PDEBUGL(3)( "acq32_channel_read returning %zd f_pos %ld\n", 
                 tcount, f_pos );
 
     return tcount;
@@ -3023,7 +3026,7 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
                                 ibuf, mfa, psrc[1], 
                                 device->appbuf.buf+ibuf, psrc+1, clenb  );
 
-                    copy_to_user( device->appbuf.buf+ibuf, psrc+1, clenb );
+                    UNCHECKED_COPY( copy_to_user( device->appbuf.buf+ibuf, psrc+1, clenb ) );
                 }       
 
                 acq32_timestamp( device, 'b', "cp ends" );
@@ -3067,7 +3070,7 @@ streaming_rowdev_read(
         }
     }
 
-    PDEBUGL(2)(  " %p buf count:%d\n", buf, count );
+    PDEBUGL(2)(  " %p buf count:%zu\n", buf, count );
 
     /*
      * setup up application buffer to be used by "Bottom Half"
@@ -3082,6 +3085,25 @@ streaming_rowdev_read(
 
     return_count = acq32_streaming_rowdev_read_workfunc( device );
 
+    /*
+     * WORKTODO: this test is dead and is deliberately left dead.
+     *
+     * return_count is size_t (unsigned), so "return_count < 0" is provably
+     * always false and gcc optimises it out.  acq32_streaming_rowdev_read_workfunc()
+     * does return -ETIMEDOUT, and that error is therefore swallowed here:
+     * the -ETIMEDOUT is overwritten by device->appbuf.count_actual a few lines
+     * down, and userspace sees a short/zero read (EOF) rather than an error.
+     *
+     * DO NOT "tidy" this by widening return_count to ssize_t.  That looks like
+     * the obvious fix but it is a behaviour change in a live streaming path:
+     * readers that today treat a timeout as end-of-stream would start getting
+     * -ETIMEDOUT back from read(2).  Changing it needs the userspace side
+     * (see Apps/ stream readers) audited first.
+     *
+     * Note the %zu conversions in the PDEBUGL() calls below were added during
+     * the 2.6.32 port to match this size_t declaration, so they cement it -
+     * they have to change together with the type, not after it.
+     */
     if ( return_count < 0 ) return return_count;
 
     /*
@@ -3093,12 +3115,12 @@ streaming_rowdev_read(
     device->appbuf.count_max = 
         device->appbuf.count_actual = 0;
 
-    PDEBUGL(2)(  " returning %d\n", return_count );
+    PDEBUGL(2)(  " returning %zu\n", return_count );
 
     filp->f_pos += return_count;         /* fpos in bytes not samples ??? */
 
     if ( return_count < 450 ) {
-        PDEBUGL(0)(  " rtn %d buf %d available %d\n",
+        PDEBUGL(0)(  " rtn %zu buf %zu available %d\n",
                     return_count, count, streamNumEntries( &device->streambuf ) );
     }
     return return_count;
@@ -3130,7 +3152,7 @@ ssize_t acq32_row_read (
         return 0;
     }
 
-    PDEBUGL(2)( "acq32_row_read pos:%ld count: %d\n", f_pos, count );
+    PDEBUGL(2)( "acq32_row_read pos:%ld count: %zu\n", f_pos, count );
 
     max_samples = acq32_FetchData( path, f_pos, max_samples, channel );
 
@@ -3204,11 +3226,11 @@ ssize_t acq32_row_read (
 
             if ( tcount+add_chars <= count ){
                 PDEBUGL(4)( "acq32_row_read copy %d\n", add_chars );
-                copy_to_user( buf+tcount, kstring, add_chars );
+                UNCHECKED_COPY( copy_to_user( buf+tcount, kstring, add_chars ) );
                 tcount += add_chars;
             }else{
                 acq32_discardLastData( path, last_len );
-                PDEBUGL(4)( "acq32_row_read full tcount:%d addc:%d\n",
+                PDEBUGL(4)( "acq32_row_read full tcount:%zd addc:%d\n",
                             tcount, add_chars );                
                 break;
             }
@@ -3217,7 +3239,7 @@ ssize_t acq32_row_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "acq32_row_read pos %ld returning %d\n", f_pos, tcount );
+    PDEBUGL(3)( "acq32_row_read pos %ld returning %zd\n", f_pos, tcount );
 
     return tcount;
 }
@@ -3505,7 +3527,7 @@ static int _acq32_fetchDataToLocalBuffer(
 	PDEBUG("ERROR - request too big for mapping\n" );
     }
     if ( end_of_message ){
-	PDEBUG("WARNING - end of message [%d], app should retry at offset\n",
+	PDEBUG("WARNING - end of message [%zu], app should retry at offset\n",
 	       MESSAGE_HRDR_LEN );
     }
 
@@ -3548,7 +3570,7 @@ static int _acq32_fetchDataToLocalBuffer(
 
     if ( acq32_debug ){
 	    char buf[20];
-	    copy_from_user( buf, buffer, 20 );
+	    UNCHECKED_COPY( copy_from_user( buf, buffer, 20 ) );
 	    buf[19] = '\0';
 
 	    PDEBUGL(3)( "Contents of buffer now %s\n", buf );
@@ -3636,7 +3658,7 @@ extern int acq32_getBufferPhysicalAddr(
 //  copy_to_user( buffer, paddrs, (ireq*2+2)*sizeof(u32) );
     memcpy( mapping->buffers[0], paddrs, (ireq*2+2)*sizeof(u32) );
     
-    PDEBUGL(2)(  "Done - %d areas user %p len:%d\n", 
+    PDEBUGL(2)(  "Done - %d areas user %p len:%zu\n", 
                 ireq, buffer, (ireq*2+2)*sizeof(u32) );
     
     return 0;

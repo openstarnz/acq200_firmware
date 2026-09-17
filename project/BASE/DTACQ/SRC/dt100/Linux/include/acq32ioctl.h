@@ -528,6 +528,7 @@ struct READ_LOCALBUF_DESCR {
 #define EV_SOFT            "EV_SOFT"             //- the event is fired "fireEvent" 
 #define EV_TRIGGER_RISING  "EV_TRIGGER_RISING"   // <d> - the event is a rising edge of the external trigger signal
 #define EV_TRIGGER_FALLING "EV_TRIGGER_FALLING"  // <d> - the event is a falling edge of the external trigger signal
+#undef EV_NONE                                   // linux/elf.h defines EV_NONE 0 - not used here
 #define EV_NONE            "EV_NONE"             // - clears all for this event
 #define EV_DATA_EXCEEDS    "EV_DATA_EXCEEDS"     // <channel> <value>
 #define EV_DATA_BELOW      "EV_DATA_BELOW"       // <channel> <value>

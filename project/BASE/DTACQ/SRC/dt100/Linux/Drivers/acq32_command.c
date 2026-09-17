@@ -602,8 +602,9 @@ static int help_printf(
 {
     if ( STREQ( verb, MC_GET_HELP ) ){
         if ( cmd == 0 ){
-	    PDEBUGL(1)( "HPR ret %d\n", (int)txt );
-	    return (int)txt;
+	    /* txt is an int return code smuggled in the pointer arg */
+	    PDEBUGL(1)( "HPR ret %d\n", (int)(unsigned long)txt );
+	    return (int)(unsigned long)txt;
 	}else{
             APR_PRINTF( PD(filp), "%-30s : %s\n", cmd, txt );
 	    return 0;
@@ -633,11 +634,16 @@ static int do_help(
 {
     const char* verb = argv[iarg];
     char buf[256];
-    
+    int len;
+
     if ( STREQ( verb, MC_GET_HELP ) ){
         APR_PRINTF( PD(filp), "\n" );
-        acq32_report_version( buf, sizeof(buf) );
-	APR_PRINTF( PD(filp), buf );
+        len = acq32_report_version( buf, sizeof(buf) );
+	/* the version report is multi-line and longer than the 80 byte
+	 * APR_PRINTF staging buffer, and it isn't a format string - put it
+	 * on the readbuffer directly.
+	 */
+	acq32_path_readbuffer_put( PD(filp), buf, len );
 	return 0;
     }else{
         return iarg;
@@ -1369,20 +1375,34 @@ static int do_bucket_command(
     // chew up the rest of the args
 {
 //#define FN "do_bucket_command() "
-    char reject_line[80];
+    /*
+     * The rejected tokens all come out of the one command line, which
+     * _write_command() clamps to MAXCMDLINE-1 == 255 bytes, so the echo is at
+     * most 255 + one separator per token (MAXARGS is 10) + "ERROR in command:"
+     * + "(bucket)", i.e. under 292.  320 rounds that up, and matches the
+     * APR_PRINTF staging buffer.  (MAXCMDLINE/MAXARGS are defined further down
+     * this file, hence the literal.)
+     */
+    char reject_line[320];
     const char* verb = argv[iarg];
+    int len = 0;
 
     PDEBUGL(1)( " %s\n", argv[0] );
-    HELP_PRINTF_RET( (char*)0, (char*)argc );
-    
-    strcpy( reject_line, "ERROR in command:" );
+    HELP_PRINTF_RET( (char*)0, (char*)(unsigned long)argc );
+
+    /* scnprintf() returns what it actually stored, so len tracks the real
+     * length and can never walk off the end - strcpy()/strcat() here smashed
+     * the stack for any rejected command line over ~63 characters.
+     */
+    len += scnprintf( reject_line+len, sizeof(reject_line)-len,
+                      "ERROR in command:" );
     while( iarg != argc ){
-        strcat( reject_line, argv[iarg] );
-        strcat( reject_line, " " );
+        len += scnprintf( reject_line+len, sizeof(reject_line)-len,
+                          "%s ", argv[iarg] );
     	++iarg;
     }
-    strcat( reject_line, "(bucket)" );
-    acq32_path_readbuffer_put( PD(filp), reject_line, strlen(reject_line) );
+    len += scnprintf( reject_line+len, sizeof(reject_line)-len, "(bucket)" );
+    acq32_path_readbuffer_put( PD(filp), reject_line, len );
     
     PDEBUGL(1)( " returns %d\n", iarg );
 
@@ -2682,7 +2702,7 @@ int acq32_volts2bits(
     return bits;            
 }
 
-static int isdigit( char c )
+static int is_digit( char c )
 {
     return IN_RANGE( c, '0', '9' );
 }
@@ -2731,7 +2751,7 @@ static void intbufNormalise( struct INTBUF* _this, int normal ) {
     for ( decades = 0, normal2 = normal; normal2>=10; normal2/=10, decades++ )
 	;
 		
-    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%d\n",
+    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%zu\n",
 		normal, decades, strlen(_this->buf) );
 			
     while( strlen( _this->buf ) < decades ){
@@ -2740,7 +2760,7 @@ static void intbufNormalise( struct INTBUF* _this, int normal ) {
     while( strlen( _this->buf ) > decades ){
 	_this->buf[strlen(_this->buf)-1] = '\0';
     }
-    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%d (fixed)\n",
+    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%zu (fixed)\n",
 		normal, decades, strlen(_this->buf) );
 		
 }
@@ -2773,7 +2793,7 @@ static int decode_threshold(
 		if ( integer.ibuf==0 && *ptoken=='-' ){
 		    intbufSetSign( &integer, -1 );
 		    intbufSetSign( &fraction, -1 );
-		}else if ( !isdigit( *ptoken ) ){
+		}else if ( !is_digit( *ptoken ) ){
 		    if ( *ptoken == '.' ){
 			state = PROC_FRACT;
 		    }else{
@@ -2784,7 +2804,7 @@ static int decode_threshold(
 		}
 		break;
 	    case PROC_FRACT:
-		if ( isdigit( *ptoken ) ){
+		if ( is_digit( *ptoken ) ){
 		    intbufAppend( &fraction, *ptoken );
 		}else{
 		    state = PROC_DONE;
@@ -3117,7 +3137,7 @@ static ssize_t _read_command(
     int nuser = 0;          // copied to user so far
     int nget;
 
-    PDEBUGL(3)( " %d\n", count );
+    PDEBUGL(3)( " %zu\n", count );
 
 /*
  * normal action - retrieve response from CURRENT buffer 
@@ -3128,7 +3148,7 @@ static ssize_t _read_command(
         if ( nget == 0 ){
             break;
         }
-        copy_to_user( buf+nuser, lbuf, nget );
+        UNCHECKED_COPY( copy_to_user( buf+nuser, lbuf, nget ) );
         nuser += nget;
     }
    
@@ -3170,7 +3190,7 @@ ssize_t acq32_master_read (
     int nuser = 0;          // copied to user so far
     int nget;
 
-    PDEBUGL(3)( "acq32_master_read %d\n", count );
+    PDEBUGL(3)( "acq32_master_read %zu\n", count );
 
 /*
  * first time thru, flush any residual answers from previous paths
@@ -3186,7 +3206,7 @@ ssize_t acq32_master_read (
                 PDEBUGL(3) ( "acq32_master_read flush done %d\n", nuser );
                 break;
             }else{
-                copy_to_user( buf+nuser, lbuf, nget );
+                UNCHECKED_COPY( copy_to_user( buf+nuser, lbuf, nget ) );
                 nuser += nget;
             }
         }
@@ -3221,7 +3241,7 @@ static int _write_command(
 
     count = MIN( MAXCMDLINE-1, count );
 
-    copy_from_user( kbuf, buf, count );
+    UNCHECKED_COPY( copy_from_user( kbuf, buf, count ) );
     kbuf[count] = '\0';
 
     PRINTCMD( "acq32:<", kbuf );
@@ -3244,7 +3264,7 @@ static int _write_command(
         APR_PRINTF( PD(filp), "\n" );
     }
 
-    PDEBUGL(3)( " ends return %d\n", next_command-kbuf );
+    PDEBUGL(3)( " ends return %td\n", next_command-kbuf );
 
     return next_command-kbuf;
 //#undef FN

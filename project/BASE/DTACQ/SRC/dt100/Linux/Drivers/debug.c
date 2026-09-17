@@ -87,7 +87,7 @@ extern int acq32_leak_detect;
 
 void* dbg_kmalloc( size_t size, int flags, const char* file, int line ) {
     void* addr = kmalloc( size, flags );
-    LEAK( ":%p ret by ( 0x%08x, 0x%08x ) [%s,%d]",
+    LEAK( ":%p ret by ( 0x%08zx, 0x%08x ) [%s,%d]",
 		addr, size, flags, file, line );
     return addr;
 }

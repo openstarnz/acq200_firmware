@@ -304,7 +304,7 @@ ssize_t sim_channel_read (
         }
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata.aline, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata.aline, add_chars ) );
             tcount += add_chars;
         }else{
             break;
@@ -365,7 +365,7 @@ ssize_t sim_streaming_rowdev_read (
     samples_available = samples_now;
 
     PDEBUGL(3)( 
-	"streaming_rowdev_read() pos:%ld stride:%d count:%d"
+	"streaming_rowdev_read() pos:%ld stride:%d count:%zu"
 	"available:%ld\n", 
 	f_pos, stride, count, 
 	samples_available );
@@ -417,7 +417,7 @@ ssize_t sim_streaming_rowdev_read (
 		    buf+tcount, kdata_bin, add_chars );
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata_bin, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata_bin, add_chars ) );
             tcount += add_chars;
         }else{
             break;
@@ -426,7 +426,7 @@ ssize_t sim_streaming_rowdev_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "streaming_rowdev_read() returning %d\n", tcount );
+    PDEBUGL(3)( "streaming_rowdev_read() returning %zu\n", tcount );
 
     return tcount;
 }
@@ -454,7 +454,7 @@ ssize_t sim_rowdev_read (
  * formatting ... assume single ASCII format at present
  */
 
-    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%d NSAMPLES %d\n", 
+    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu NSAMPLES %d\n", 
 		f_pos, count, NSAMPLES );
 
 
@@ -528,14 +528,14 @@ ssize_t sim_rowdev_read (
         ASSERT( add_chars < sizeof(kdata) );
 
         if ( tcount+add_chars <= count ){
-            copy_to_user( buf+tcount, kdata.aline, add_chars );
+            UNCHECKED_COPY( copy_to_user( buf+tcount, kdata.aline, add_chars ) );
             tcount += add_chars;
         }else{
             break;
         }
     }
 
-    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%d end\n", f_pos, tcount );
+    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu end\n", f_pos, tcount );
 
     filp->f_pos = f_pos;
     return tcount;
@@ -597,7 +597,7 @@ static char statuses[80];
  */
 #define SAMPLES_PER_TICK(clk)     ((clk==0?200000:clk)/HZ)
 
-static int is_clocking()
+static int is_clocking(void)
 {
     if ( acq32_extclock ){
 
@@ -965,7 +965,7 @@ static int sim_GetInfo( struct Acq32Path* path, enum StatusSelect selector )
  * instantiate the master driver object
  */
 
-struct Acq32MasterDriver* acq32_getSimul()
+struct Acq32MasterDriver* acq32_getSimul(void)
 {
     static struct Acq32MasterDriver _simul = {
 
