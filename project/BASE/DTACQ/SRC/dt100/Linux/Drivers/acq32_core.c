@@ -2724,7 +2724,7 @@ int acq32_WaitEvent( THIS, struct ACQ32_WAIT_DEF* wait_def )
 }
 
 
-struct Acq32MasterDriver* acq32_getDriver()
+struct Acq32MasterDriver* acq32_getDriver(void)
 {
     static struct Acq32MasterDriver _driver = {
         acq32_GetState,                 // GetState

@@ -2688,7 +2688,7 @@ int acq32_volts2bits(
     return bits;            
 }
 
-static int isdigit( char c )
+static int is_digit( char c )
 {
     return IN_RANGE( c, '0', '9' );
 }
@@ -2779,7 +2779,7 @@ static int decode_threshold(
 		if ( integer.ibuf==0 && *ptoken=='-' ){
 		    intbufSetSign( &integer, -1 );
 		    intbufSetSign( &fraction, -1 );
-		}else if ( !isdigit( *ptoken ) ){
+		}else if ( !is_digit( *ptoken ) ){
 		    if ( *ptoken == '.' ){
 			state = PROC_FRACT;
 		    }else{
@@ -2790,7 +2790,7 @@ static int decode_threshold(
 		}
 		break;
 	    case PROC_FRACT:
-		if ( isdigit( *ptoken ) ){
+		if ( is_digit( *ptoken ) ){
 		    intbufAppend( &fraction, *ptoken );
 		}else{
 		    state = PROC_DONE;

@@ -597,7 +597,7 @@ static char statuses[80];
  */
 #define SAMPLES_PER_TICK(clk)     ((clk==0?200000:clk)/HZ)
 
-static int is_clocking()
+static int is_clocking(void)
 {
     if ( acq32_extclock ){
 
@@ -965,7 +965,7 @@ static int sim_GetInfo( struct Acq32Path* path, enum StatusSelect selector )
  * instantiate the master driver object
  */
 
-struct Acq32MasterDriver* acq32_getSimul()
+struct Acq32MasterDriver* acq32_getSimul(void)
 {
     static struct Acq32MasterDriver _simul = {
 

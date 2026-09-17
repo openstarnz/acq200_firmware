@@ -1171,13 +1171,13 @@ int acq32_WaitEvent( THIS, struct ACQ32_WAIT_DEF* wait_def );
 
 void acq32_show_busy( int set );
 
-extern struct Acq32MasterDriver* acq32_getDriver();
-extern struct Acq32MasterDriver* acq32_getSimul();
+extern struct Acq32MasterDriver* acq32_getDriver(void);
+extern struct Acq32MasterDriver* acq32_getSimul(void);
 
 void acq32_finish_with_engines( struct DriverPrivate* dp );
 void acq32_restart_timer_task( struct DriverPrivate* dp );
 
-int acq32_getDeviceCount();
+int acq32_getDeviceCount(void);
 
 // common timer restart func
 
@@ -1502,8 +1502,8 @@ extern int acq32_intsEnable( unsigned irqs );
 extern int acq32_intsDisable( unsigned irqs );
 extern int acq32_swallowKmem( unsigned orders );
 
-extern int acq32_globalIoreadFetchMutexDown();
-extern void acq32_globalIoreadFetchMutexUp();
+extern int acq32_globalIoreadFetchMutexDown(void);
+extern void acq32_globalIoreadFetchMutexUp(void);
 
 extern void acq32_doGetStateWork( 
     struct file* filp, unsigned status, unsigned last_status );

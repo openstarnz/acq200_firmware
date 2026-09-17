@@ -51,7 +51,7 @@ void acq200_bb_init( long base, long length, int ndevices )
 	bb.inext = 0;
 }
 
-void acq200_bb_close()
+void acq200_bb_close(void)
 {
 
 }

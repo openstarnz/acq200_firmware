@@ -592,12 +592,12 @@ struct Acq32Device* acq32_allocate_device(void)
 	return device;
 }
 
-extern int acq32_globalIoreadFetchMutexDown()
+extern int acq32_globalIoreadFetchMutexDown(void)
 {
     MUTEX_DOWN( &S_acq32.ioread_fetch_mutex ); // returns on signal/error
     return 0;
 }
-extern void acq32_globalIoreadFetchMutexUp()
+extern void acq32_globalIoreadFetchMutexUp(void)
 {
     MUTEX_UP( &S_acq32.ioread_fetch_mutex );
 }
@@ -651,7 +651,7 @@ static void freeDmaBuffer( struct Acq32Device* device )
 #endif
 
 
-int acq32_getDeviceCount() {
+int acq32_getDeviceCount(void) {
 	return S_acq32.ndevs;
 }
 /*

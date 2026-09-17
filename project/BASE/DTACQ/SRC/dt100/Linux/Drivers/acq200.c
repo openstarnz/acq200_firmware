@@ -789,15 +789,6 @@ acq200_bridge_driver_init( struct DevGlob *dg )
 } 
 
 
-static inline int toupper( char c )
-/* including ctype.h appears to be bad idea! */
-{
-	if ( c >= 'a' && c <= 'z' ){
-		c = c - 'a' + 'A';
-	}
-	return c;
-}
-
 
 static int acq200_getImagesDef(
     struct Acq32Device* device,

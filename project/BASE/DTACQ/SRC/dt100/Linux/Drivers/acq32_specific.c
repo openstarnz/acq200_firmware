@@ -442,12 +442,15 @@ int acq32_mmap( struct file* filp, struct vm_area_struct* vma )
 #if defined(__i386__)
         if (boot_cpu_data.x86 > 3)
             pgprot_val(vma->vm_page_prot) |= _PAGE_PCD;
-#else
-#if defined (__alpha__ )
+#elif defined(__x86_64__)
+        /* left at the default cache attribute, as it has been since the
+         * 2.6.32 port.  This MMIO mapping arguably wants pgprot_noncached(),
+         * but that is a behaviour change - not made here.
+         */
+#elif defined(__alpha__)
 #warning "building for alpha"
 #else
 #warning "What have we here ??"
-#endif
 #endif
 
         if ( remap_pfn_range(
