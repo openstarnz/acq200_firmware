@@ -486,7 +486,7 @@ ssize_t acq200_bridge_read_generic (
 		count = min(count, (size_t)kbuf->len);
 	}
 
-	dbg(1, "build count %d", count );
+	dbg(1, "build count %zu", count );
 
 	message = build_incoming_raw_message( 
 		file, kbuf->pa, *posp, count, hrd_code);
@@ -503,7 +503,7 @@ ssize_t acq200_bridge_read_generic (
 		count = (size_t)rch->clidata;
 	}
 
-	dbg(1,"copy to user va:%p pa:0x%08lx count:%d",
+	dbg(1,"copy to user va:%p pa:0x%08lx count:%zu",
 	    kbuf->va, kbuf->pa, count );
 
 	acq200_copy_from_io_to_user(file, buf, kbuf->va, count );
@@ -511,7 +511,7 @@ ssize_t acq200_bridge_read_generic (
 	
 	*posp += count;
 
-	dbg(1, "return %d", count);
+	dbg(1, "return %zu", count);
 	return count;   
 }
 

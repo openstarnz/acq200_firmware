@@ -1396,7 +1396,7 @@ static Message* getMessageBuffer( struct Acq32Path* path )
     ASSERT( sizeof( struct Acq32Path ) < 4096 );    // keep it less than one page
     ASSERT( sizeof( path->scratch ) > sizeof(Message) );
     
-    PDEBUGL(2)("getMessageBuffer() sizeof struct Acq32Path:%d Message:%d\n", 
+    PDEBUGL(2)("getMessageBuffer() sizeof struct Acq32Path:%zu Message:%zu\n", 
                sizeof(struct Acq32Path), sizeof(Message) );
                     
     return (Message*)path->scratch;
@@ -1443,7 +1443,7 @@ int acq32_sendI2O( struct Acq32Path* path, struct MESSAGE* arg )
 {
     Message* message = getMessageBuffer( path );
 
-    PDEBUGL(2)( " call copy_from_user( %p %p %d )\n", 
+    PDEBUGL(2)( " call copy_from_user( %p %p %zu )\n", 
                 &message->header, arg, sizeof(Message) );
     
     copy_from_user( &message->header, arg, sizeof(MessageHeader) );
@@ -2835,7 +2835,7 @@ ssize_t acq32_channel_read (
         return 0;
     }
 
-    PDEBUGL(3)( "acq32_channel_read count: %d %ld\n", count, f_pos );
+    PDEBUGL(3)( "acq32_channel_read count: %zu %ld\n", count, f_pos );
 
     max_samples = acq32_FetchData( path, f_pos, max_samples, channel );
 
@@ -2903,7 +2903,7 @@ ssize_t acq32_channel_read (
                 copy_to_user( buf+tcount, kdata, add_chars );
                 tcount += add_chars;
                
-                PDEBUGL(6)( " copied, tcount now %d\n", tcount );
+                PDEBUGL(6)( " copied, tcount now %zd\n", tcount );
 
             }else{
                 acq32_discardLastData( path, last_len );
@@ -2915,7 +2915,7 @@ ssize_t acq32_channel_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "acq32_channel_read returning %d f_pos %ld\n", 
+    PDEBUGL(3)( "acq32_channel_read returning %zd f_pos %ld\n", 
                 tcount, f_pos );
 
     return tcount;
@@ -3070,7 +3070,7 @@ streaming_rowdev_read(
         }
     }
 
-    PDEBUGL(2)(  " %p buf count:%d\n", buf, count );
+    PDEBUGL(2)(  " %p buf count:%zu\n", buf, count );
 
     /*
      * setup up application buffer to be used by "Bottom Half"
@@ -3096,12 +3096,12 @@ streaming_rowdev_read(
     device->appbuf.count_max = 
         device->appbuf.count_actual = 0;
 
-    PDEBUGL(2)(  " returning %d\n", return_count );
+    PDEBUGL(2)(  " returning %zu\n", return_count );
 
     filp->f_pos += return_count;         /* fpos in bytes not samples ??? */
 
     if ( return_count < 450 ) {
-        PDEBUGL(0)(  " rtn %d buf %d available %d\n",
+        PDEBUGL(0)(  " rtn %zu buf %zu available %d\n",
                     return_count, count, streamNumEntries( &device->streambuf ) );
     }
     return return_count;
@@ -3133,7 +3133,7 @@ ssize_t acq32_row_read (
         return 0;
     }
 
-    PDEBUGL(2)( "acq32_row_read pos:%ld count: %d\n", f_pos, count );
+    PDEBUGL(2)( "acq32_row_read pos:%ld count: %zu\n", f_pos, count );
 
     max_samples = acq32_FetchData( path, f_pos, max_samples, channel );
 
@@ -3211,7 +3211,7 @@ ssize_t acq32_row_read (
                 tcount += add_chars;
             }else{
                 acq32_discardLastData( path, last_len );
-                PDEBUGL(4)( "acq32_row_read full tcount:%d addc:%d\n",
+                PDEBUGL(4)( "acq32_row_read full tcount:%zd addc:%d\n",
                             tcount, add_chars );                
                 break;
             }
@@ -3220,7 +3220,7 @@ ssize_t acq32_row_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "acq32_row_read pos %ld returning %d\n", f_pos, tcount );
+    PDEBUGL(3)( "acq32_row_read pos %ld returning %zd\n", f_pos, tcount );
 
     return tcount;
 }
@@ -3508,7 +3508,7 @@ static int _acq32_fetchDataToLocalBuffer(
 	PDEBUG("ERROR - request too big for mapping\n" );
     }
     if ( end_of_message ){
-	PDEBUG("WARNING - end of message [%d], app should retry at offset\n",
+	PDEBUG("WARNING - end of message [%zu], app should retry at offset\n",
 	       MESSAGE_HRDR_LEN );
     }
 
@@ -3639,7 +3639,7 @@ extern int acq32_getBufferPhysicalAddr(
 //  copy_to_user( buffer, paddrs, (ireq*2+2)*sizeof(u32) );
     memcpy( mapping->buffers[0], paddrs, (ireq*2+2)*sizeof(u32) );
     
-    PDEBUGL(2)(  "Done - %d areas user %p len:%d\n", 
+    PDEBUGL(2)(  "Done - %d areas user %p len:%zu\n", 
                 ireq, buffer, (ireq*2+2)*sizeof(u32) );
     
     return 0;

@@ -2737,7 +2737,7 @@ static void intbufNormalise( struct INTBUF* _this, int normal ) {
     for ( decades = 0, normal2 = normal; normal2>=10; normal2/=10, decades++ )
 	;
 		
-    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%d\n",
+    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%zu\n",
 		normal, decades, strlen(_this->buf) );
 			
     while( strlen( _this->buf ) < decades ){
@@ -2746,7 +2746,7 @@ static void intbufNormalise( struct INTBUF* _this, int normal ) {
     while( strlen( _this->buf ) > decades ){
 	_this->buf[strlen(_this->buf)-1] = '\0';
     }
-    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%d (fixed)\n",
+    PDEBUGL(2)( "intbufNormalise() normal:%d decades:%d len:%zu (fixed)\n",
 		normal, decades, strlen(_this->buf) );
 		
 }
@@ -3123,7 +3123,7 @@ static ssize_t _read_command(
     int nuser = 0;          // copied to user so far
     int nget;
 
-    PDEBUGL(3)( " %d\n", count );
+    PDEBUGL(3)( " %zu\n", count );
 
 /*
  * normal action - retrieve response from CURRENT buffer 
@@ -3176,7 +3176,7 @@ ssize_t acq32_master_read (
     int nuser = 0;          // copied to user so far
     int nget;
 
-    PDEBUGL(3)( "acq32_master_read %d\n", count );
+    PDEBUGL(3)( "acq32_master_read %zu\n", count );
 
 /*
  * first time thru, flush any residual answers from previous paths
@@ -3250,7 +3250,7 @@ static int _write_command(
         APR_PRINTF( PD(filp), "\n" );
     }
 
-    PDEBUGL(3)( " ends return %d\n", next_command-kbuf );
+    PDEBUGL(3)( " ends return %td\n", next_command-kbuf );
 
     return next_command-kbuf;
 //#undef FN

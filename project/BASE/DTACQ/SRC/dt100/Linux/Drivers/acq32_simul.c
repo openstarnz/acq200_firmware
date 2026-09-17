@@ -365,7 +365,7 @@ ssize_t sim_streaming_rowdev_read (
     samples_available = samples_now;
 
     PDEBUGL(3)( 
-	"streaming_rowdev_read() pos:%ld stride:%d count:%d"
+	"streaming_rowdev_read() pos:%ld stride:%d count:%zu"
 	"available:%ld\n", 
 	f_pos, stride, count, 
 	samples_available );
@@ -426,7 +426,7 @@ ssize_t sim_streaming_rowdev_read (
 
     filp->f_pos = f_pos;
 
-    PDEBUGL(3)( "streaming_rowdev_read() returning %d\n", tcount );
+    PDEBUGL(3)( "streaming_rowdev_read() returning %zu\n", tcount );
 
     return tcount;
 }
@@ -454,7 +454,7 @@ ssize_t sim_rowdev_read (
  * formatting ... assume single ASCII format at present
  */
 
-    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%d NSAMPLES %d\n", 
+    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu NSAMPLES %d\n", 
 		f_pos, count, NSAMPLES );
 
 
@@ -535,7 +535,7 @@ ssize_t sim_rowdev_read (
         }
     }
 
-    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%d end\n", f_pos, tcount );
+    PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu end\n", f_pos, tcount );
 
     filp->f_pos = f_pos;
     return tcount;

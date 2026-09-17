@@ -1991,7 +1991,7 @@ acq32_hostbuf_read ( struct file* filp, char* buf, size_t count, loff_t* posp )
 	struct Acq32Device* dev = PDEV(filp);
 	int pos = (int)*posp;
 
-	int len = sprintf(myline, "BIGBUF: pa=0x%08x len=0x%08x\n",
+	int len = sprintf(myline, "BIGBUF: pa=0x%08x len=0x%08zx\n",
 			dev->dmabuf.pa, dev->dmabuf.len);
 
 	if (pos < len){
