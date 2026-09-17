@@ -602,8 +602,9 @@ static int help_printf(
 {
     if ( STREQ( verb, MC_GET_HELP ) ){
         if ( cmd == 0 ){
-	    PDEBUGL(1)( "HPR ret %d\n", (int)txt );
-	    return (int)txt;
+	    /* txt is an int return code smuggled in the pointer arg */
+	    PDEBUGL(1)( "HPR ret %d\n", (int)(unsigned long)txt );
+	    return (int)(unsigned long)txt;
 	}else{
             APR_PRINTF( PD(filp), "%-30s : %s\n", cmd, txt );
 	    return 0;
@@ -633,11 +634,16 @@ static int do_help(
 {
     const char* verb = argv[iarg];
     char buf[256];
-    
+    int len;
+
     if ( STREQ( verb, MC_GET_HELP ) ){
         APR_PRINTF( PD(filp), "\n" );
-        acq32_report_version( buf, sizeof(buf) );
-	APR_PRINTF( PD(filp), buf );
+        len = acq32_report_version( buf, sizeof(buf) );
+	/* the version report is multi-line and longer than the 80 byte
+	 * APR_PRINTF staging buffer, and it isn't a format string - put it
+	 * on the readbuffer directly.
+	 */
+	acq32_path_readbuffer_put( PD(filp), buf, len );
 	return 0;
     }else{
         return iarg;

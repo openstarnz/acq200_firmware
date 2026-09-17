@@ -914,7 +914,7 @@ extern int acq32_command_debug;
 #define ACQ32_PATH_READBUFFER_PRINTF( path, fmt...) \
 {\
     char local[80];\
-    sprintf( local, ##fmt );\
+    snprintf( local, sizeof(local), ##fmt );\
     PRINTCMD( "acq32:>", local );\
     acq32_path_readbuffer_put( path, local, strlen(local) ); \
 }

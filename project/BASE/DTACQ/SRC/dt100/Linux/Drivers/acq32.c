@@ -1090,14 +1090,17 @@ int acq32_report_version( char *buf, int max_len )
 {
     int len = 0;
 
-    len += PRINTF( "acq32-drv: build " __DATE__ " " __TIME__ "\n" );
+    /* scnprintf() returns the count actually stored, so len can never run
+     * past max_len - callers hand us buffers as small as 256 bytes.
+     */
+    len += scnprintf( buf+len, max_len-len,
+        "acq32-drv: build " __DATE__ " " __TIME__ "\n" );
 
-    len += PRINTF( 
+    len += scnprintf( buf+len, max_len-len,
         "VERSION: %s num devices %d\n", DTACQ_RELEASE_STRING, S_acq32.ndevs );
-    len += PRINTF( "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
-    
-    ASSERT( len < max_len );
-    
+    len += scnprintf( buf+len, max_len-len,
+        "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
+
     return len;
 }
 
