@@ -911,13 +911,26 @@ extern int acq32_command_debug;
 #define PRINTBP( dir, text ) \
     if ( acq32_busprot_debug ) printk( KERN_DEBUG "%s%s\n", dir, text )
     
+/*
+ * ACQ32_PATH_READBUFFER_PRINTF()/APR_PRINTF() - format a command response and
+ * hand it to the path readbuffer.
+ *
+ * This used to expand a "char local[80]" plus sprintf() inline at every one of
+ * the ~92 call sites.  sprintf() smashed the stack on the long ones (SOF-678);
+ * swapping in snprintf() stopped the smash but silently truncated instead, so
+ * getChannelMask handed userspace 64 of a 96 channel ACQ196 mask.
+ *
+ * It is now a real function with a single, measured buffer - see
+ * acq32_path_readbuffer_printf() in acq32_utils.c for the sizing evidence.
+ * That keeps the staging buffer off the caller's frame (it was one buffer per
+ * function in the write path, now it is one frame at the leaf) and gives one
+ * place to audit, and to shout from if a future call site ever overruns it.
+ */
+void acq32_path_readbuffer_printf( struct Acq32Path* path, const char* fmt, ... )
+    __attribute__ (( format( printf, 2, 3 ) ));
+
 #define ACQ32_PATH_READBUFFER_PRINTF( path, fmt...) \
-{\
-    char local[80];\
-    snprintf( local, sizeof(local), ##fmt );\
-    PRINTCMD( "acq32:>", local );\
-    acq32_path_readbuffer_put( path, local, strlen(local) ); \
-}
+    acq32_path_readbuffer_printf( path, ##fmt )
 
 /*
  * 2.6 marks copy_to_user()/copy_from_user() __must_check.  This driver has
