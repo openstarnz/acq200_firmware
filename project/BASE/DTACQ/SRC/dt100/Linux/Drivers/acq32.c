@@ -1578,10 +1578,18 @@ int acq32_request_irq( struct Acq32Path* path )
                 );
 
             device->use_interrupts = result==0;
-            path->uses_irq = 1;
         }
         rv = device->p_md->OnOpen && device->p_md->OnOpen( path );
     }
+
+    /*
+     * Every path that incremented nclients must decrement it in
+     * acq32_free_irq(), which bails out early when uses_irq is 0.  Setting
+     * this only for the first client stranded the count above zero, so
+     * free_irq() never ran and the ISR stayed registered after rmmod -
+     * the next interrupt then jumped into freed module memory.
+     */
+    path->uses_irq = 1;
 
     up( &device->m_dpd.irq_req_mutex );
 
