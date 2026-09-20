@@ -911,13 +911,27 @@ extern int acq32_command_debug;
 #define PRINTBP( dir, text ) \
     if ( acq32_busprot_debug ) printk( KERN_DEBUG "%s%s\n", dir, text )
     
+/*
+ * ACQ32_PATH_READBUFFER_PRINTF()/APR_PRINTF() - format a command response and
+ * hand it to the path readbuffer.
+ *
+ * A function rather than an inline macro so the staging buffer sits in one
+ * leaf frame instead of one per caller, and so there is a single place to
+ * size, audit, and warn from.  Sizing: acq32_utils.c.
+ */
+void acq32_path_readbuffer_printf( struct Acq32Path* path, const char* fmt, ... )
+    __attribute__ (( format( printf, 2, 3 ) ));
+
 #define ACQ32_PATH_READBUFFER_PRINTF( path, fmt...) \
-{\
-    char local[80];\
-    sprintf( local, ##fmt );\
-    PRINTCMD( "acq32:>", local );\
-    acq32_path_readbuffer_put( path, local, strlen(local) ); \
-}
+    acq32_path_readbuffer_printf( path, ##fmt )
+
+/*
+ * copy_to_user()/copy_from_user() are __must_check.  These sites discard the
+ * not-copied count deliberately: returning -EFAULT instead would change
+ * read/write/ioctl behaviour.  Explicit and greppable rather than cast away.
+ * WORKTODO: audit these and return -EFAULT where the caller can cope.
+ */
+#define UNCHECKED_COPY( expr )   do { if ( (expr) ){ ; } } while( 0 )
 
 
 int acq32_path_readbuffer_is_empty( struct Acq32Path* path );
@@ -1171,13 +1185,13 @@ int acq32_WaitEvent( THIS, struct ACQ32_WAIT_DEF* wait_def );
 
 void acq32_show_busy( int set );
 
-extern struct Acq32MasterDriver* acq32_getDriver();
-extern struct Acq32MasterDriver* acq32_getSimul();
+extern struct Acq32MasterDriver* acq32_getDriver(void);
+extern struct Acq32MasterDriver* acq32_getSimul(void);
 
 void acq32_finish_with_engines( struct DriverPrivate* dp );
 void acq32_restart_timer_task( struct DriverPrivate* dp );
 
-int acq32_getDeviceCount();
+int acq32_getDeviceCount(void);
 
 // common timer restart func
 
@@ -1502,8 +1516,8 @@ extern int acq32_intsEnable( unsigned irqs );
 extern int acq32_intsDisable( unsigned irqs );
 extern int acq32_swallowKmem( unsigned orders );
 
-extern int acq32_globalIoreadFetchMutexDown();
-extern void acq32_globalIoreadFetchMutexUp();
+extern int acq32_globalIoreadFetchMutexDown(void);
+extern void acq32_globalIoreadFetchMutexUp(void);
 
 extern void acq32_doGetStateWork( 
     struct file* filp, unsigned status, unsigned last_status );

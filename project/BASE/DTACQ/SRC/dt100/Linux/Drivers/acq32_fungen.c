@@ -84,7 +84,7 @@ static ssize_t xO_immediate_write (
 		"xxxx" );
     
     for ( isample = 0; isample != n32; ++isample ){
-        copy_from_user( &sample, buf+4*isample, 4 );
+        UNCHECKED_COPY( copy_from_user( &sample, buf+4*isample, 4 ) );
 	
 	PDEBUGL(3)(  " send sample %d value 0x%08x\n", isample, sample );
 	    

@@ -357,7 +357,7 @@ int acq200_copy_from_io_to_user(
 	while( count > 0 ){
 		ncopy = min(count, LBUFLEN);
 		memcpy_fromio(tmp, src, ncopy);
-		copy_to_user(dst, tmp, ncopy);
+		UNCHECKED_COPY( copy_to_user(dst, tmp, ncopy) );
 		src += ncopy;
 		dst += ncopy;
 		count -= ncopy;
@@ -381,7 +381,7 @@ int acq200_copy_from_user_to_io(
 
 	while( count > 0 ){
 		ncopy = min(count, LBUFLEN);
-		copy_from_user(tmp, src, ncopy);
+		UNCHECKED_COPY( copy_from_user(tmp, src, ncopy) );
 		memcpy_toio(dst, tmp, ncopy);
 		src += ncopy;
 		dst += ncopy;
@@ -433,14 +433,26 @@ static void i2o_handleReadMessageFile(
 
 	dbg(2, "nsamples %d\n", nsamples);
 
+	/* clidata is genuinely overloaded.  buildRch() parks the in-flight
+	 * struct IoMapping* (the kbuf) in it, and the readers in
+	 * acq200_bridge_read_generic()/acq200_fetchDataToLocalBuffer() wait on
+	 * "clidata != kbuf" to spot that this handler has run.  Only then is it
+	 * reused to hand back a 32 bit sample count, with 0xffffffff meaning
+	 * "no data".  So it carries a real pointer and a count at different
+	 * points in the same exchange - do not assume either one.
+	 *
+	 * Go via u32 so the 0xffffffff sentinel doesn't sign-extend on 64 bit:
+	 * the readers compare against (void*)0xffffffff.
+	 */
 	if (nsamples == 0xffffffff){
-		self->clidata = (void*)nsamples;
+		self->clidata = (void*)(unsigned long)(u32)nsamples;
 	}else{
-		self->clidata = (void*)(nsamples*2);
+		self->clidata = (void*)(unsigned long)(u32)(nsamples*2);
 	}
 	wake_up_interruptible(&self->path->return_waitq);
 }
 
+#ifdef PGMCOMOUT	/* only user is acq200_fetchDataToLocalBuffer(), below */
 static void i2o_handleReadMessage(
 	struct ReturnCommandHandler* self,
 	struct MESSAGE* response
@@ -455,10 +467,11 @@ static void i2o_handleReadMessage(
 
 	dbg(2, "nsamples %d\n", nsamples);
 
-	self->clidata = (void*)nsamples;
+	self->clidata = (void*)(unsigned long)(u32)nsamples;
 
 	wake_up_interruptible(&self->path->return_waitq);
 }
+#endif /* PGMCOMOUT */
 
 
 
@@ -480,7 +493,7 @@ ssize_t acq200_bridge_read_generic (
 		count = min(count, (size_t)kbuf->len);
 	}
 
-	dbg(1, "build count %d", count );
+	dbg(1, "build count %zu", count );
 
 	message = build_incoming_raw_message( 
 		file, kbuf->pa, *posp, count, hrd_code);
@@ -497,7 +510,7 @@ ssize_t acq200_bridge_read_generic (
 		count = (size_t)rch->clidata;
 	}
 
-	dbg(1,"copy to user va:%p pa:0x%08lx count:%d",
+	dbg(1,"copy to user va:%p pa:0x%08lx count:%zu",
 	    kbuf->va, kbuf->pa, count );
 
 	acq200_copy_from_io_to_user(file, buf, kbuf->va, count );
@@ -505,7 +518,7 @@ ssize_t acq200_bridge_read_generic (
 	
 	*posp += count;
 
-	dbg(1, "return %d", count);
+	dbg(1, "return %zu", count);
 	return count;   
 }
 
@@ -782,15 +795,6 @@ acq200_bridge_driver_init( struct DevGlob *dg )
 	return 0;
 } 
 
-
-static inline int toupper( char c )
-/* including ctype.h appears to be bad idea! */
-{
-	if ( c >= 'a' && c <= 'z' ){
-		c = c - 'a' + 'A';
-	}
-	return c;
-}
 
 
 static int acq200_getImagesDef(

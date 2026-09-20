@@ -120,7 +120,7 @@ static int readbuffer_put( struct ReadBuffer* rb, char* cli_data, int nbytes )
 {
     int ibyte;
 
-    for ( ibyte = 0; ibyte != nbytes && !IS_FULL( rb ); ++ibyte ){
+    for ( ibyte = 0; ibyte < nbytes && !IS_FULL( rb ); ++ibyte ){
         PUT( rb, cli_data[ibyte] );
     }
     return ibyte;
@@ -159,6 +159,74 @@ int acq32_device_readbuffer_get(
 int acq32_path_readbuffer_put( struct Acq32Path* path, char* cli_data, int nbytes )
 {
     return readbuffer_put( &path->prb, cli_data, nbytes );
+}
+
+/*
+ * Staging buffer for ACQ32_PATH_READBUFFER_PRINTF()/APR_PRINTF().
+ *
+ * Sized from the worst-case formatted length over all current call sites. The
+ * 92 command-parser call sites are in acq32_command.c; acq32_simul.c has nine
+ * additional literal-only call sites. Twelve command-parser calls exceed
+ * 80 bytes:
+ *
+ *   111  getChannelMask=%s      "getChannelMask=" + a 96 char ACQ196 mask
+ *   119  getVoltsRange ...      eight %d, each worst case INT_MIN
+ *   272  "ERROR: bad mode %s\n"                        ) ten sites that echo
+ *   281  "ERROR:Incorrect dest arg %s\n"               ) an argv[] token back
+ *   285  "ERROR:Incorrect function arg %s\n"           ) to the caller
+ *   287  "ERROR:dont understand selector %s\n"         )
+ *   292  "ERROR: failed: diX (%s) not recognised\n" x2 )
+ *   295  "ERROR:getPhase property not recognised %s\n" )
+ *   295  "ERROR:SetClock failed, unknown subject %s\n" )
+ *   296  "ERROR:SetInternalClock <freq> [DOx] not %s\n")
+ *   296  "ERROR: failed to decode EVENT CONDITION %s\n")
+ *
+ * The argv[] sites dominate: _write_command() clamps a write to
+ * MAXCMDLINE-1 == 255 bytes and getargs() puts no cap on token length, so a
+ * single token can be ~255 characters and any of these can be asked to format
+ * ~296 bytes.  128 is therefore not enough, and neither is 256.  296 + NUL is
+ * 297; 320 rounds that up with a little headroom.
+ *
+ * The other 80 sites are all under 80 bytes; the largest is 79
+ * ("%s%d: %s, %s, %s, %s, %s\n" in do_GetSyncRoute_command()).
+ *
+ * READBUFFERLEN is 4096, so the readbuffer downstream takes 320 without
+ * complaint.
+ */
+#define APR_PRINTF_BUFLEN 320
+
+void acq32_path_readbuffer_printf( struct Acq32Path* path, const char* fmt, ... )
+{
+    char local[APR_PRINTF_BUFLEN];
+    va_list ap;
+    int len;
+
+    va_start( ap, fmt );
+    len = vsnprintf( local, sizeof(local), fmt, ap );
+    va_end( ap );
+
+    /*
+     * vsnprintf() returns what it *would* have written, so an overrun is
+     * detectable here rather than silently short-changing userspace the way
+     * the inline snprintf() did.  Nothing should hit this - if something does,
+     * the call site is new and APR_PRINTF_BUFLEN needs revisiting.
+     */
+    if ( len < 0 ){
+        /* vsnprintf() failed - emit nothing rather than passing a negative
+         * length down to readbuffer_put().
+         */
+        return;
+    }
+    if ( len >= (int)sizeof(local) ){
+        printk( KERN_WARNING
+                "acq32: APR_PRINTF truncated, needed %d of %d bytes: %s\n",
+                len + 1, (int)sizeof(local), local );
+        len = (int)sizeof(local) - 1;
+    }
+
+    PRINTCMD( "acq32:>", local );
+
+    acq32_path_readbuffer_put( path, local, len );
 }
 
 int acq32_path_readbuffer_get( struct Acq32Path* path, char* cli_data, int maxbytes )

@@ -592,12 +592,12 @@ struct Acq32Device* acq32_allocate_device(void)
 	return device;
 }
 
-extern int acq32_globalIoreadFetchMutexDown()
+extern int acq32_globalIoreadFetchMutexDown(void)
 {
     MUTEX_DOWN( &S_acq32.ioread_fetch_mutex ); // returns on signal/error
     return 0;
 }
-extern void acq32_globalIoreadFetchMutexUp()
+extern void acq32_globalIoreadFetchMutexUp(void)
 {
     MUTEX_UP( &S_acq32.ioread_fetch_mutex );
 }
@@ -651,7 +651,7 @@ static void freeDmaBuffer( struct Acq32Device* device )
 #endif
 
 
-int acq32_getDeviceCount() {
+int acq32_getDeviceCount(void) {
 	return S_acq32.ndevs;
 }
 /*
@@ -1090,14 +1090,17 @@ int acq32_report_version( char *buf, int max_len )
 {
     int len = 0;
 
-    len += PRINTF( "acq32-drv: build " __DATE__ " " __TIME__ "\n" );
+    /* scnprintf() returns the count actually stored, so len can never run
+     * past max_len - callers hand us buffers as small as 256 bytes.
+     */
+    len += scnprintf( buf+len, max_len-len,
+        "acq32-drv: build " __DATE__ " " __TIME__ "\n" );
 
-    len += PRINTF( 
+    len += scnprintf( buf+len, max_len-len,
         "VERSION: %s num devices %d\n", DTACQ_RELEASE_STRING, S_acq32.ndevs );
-    len += PRINTF( "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
-    
-    ASSERT( len < max_len );
-    
+    len += scnprintf( buf+len, max_len-len,
+        "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
+
     return len;
 }
 
@@ -1374,7 +1377,7 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
 
             struct READ_LOCALBUF_DESCR descr;
                 
-            copy_from_user( &descr, (void*)arg, sizeof(descr) );
+            UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
                 
             return dev->fetchDataToLocalBuffer( 
                 filp,
@@ -1504,7 +1507,7 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
 
             struct READ_LOCALBUF_DESCR descr;
                 
-            copy_from_user( &descr, (void*)arg, sizeof(descr) );
+            UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
                 
             return acq32_fetchDataToLocalBuffer( 
                 filp,
@@ -1575,10 +1578,18 @@ int acq32_request_irq( struct Acq32Path* path )
                 );
 
             device->use_interrupts = result==0;
-            path->uses_irq = 1;
         }
         rv = device->p_md->OnOpen && device->p_md->OnOpen( path );
     }
+
+    /*
+     * Every path that incremented nclients must decrement it in
+     * acq32_free_irq(), which bails out early when uses_irq is 0.  Setting
+     * this only for the first client stranded the count above zero, so
+     * free_irq() never ran and the ISR stayed registered after rmmod -
+     * the next interrupt then jumped into freed module memory.
+     */
+    path->uses_irq = 1;
 
     up( &device->m_dpd.irq_req_mutex );
 
@@ -1819,7 +1830,7 @@ ssize_t linear_buffer_read(
         for ( ; (ncopy = MIN( count-running_count, sizeof(PD(filp)->scratch) )); 
               running_count += ncopy ){
             memcpy_fromio( PD(filp)->scratch, pkmem+f_pos+running_count, ncopy );
-            copy_to_user( buf+running_count, PD(filp)->scratch, ncopy );
+            UNCHECKED_COPY( copy_to_user( buf+running_count, PD(filp)->scratch, ncopy ) );
         }
     }
 
@@ -1988,12 +1999,12 @@ acq32_hostbuf_read ( struct file* filp, char* buf, size_t count, loff_t* posp )
 	struct Acq32Device* dev = PDEV(filp);
 	int pos = (int)*posp;
 
-	int len = sprintf(myline, "BIGBUF: pa=0x%08x len=0x%08x\n",
+	int len = sprintf(myline, "BIGBUF: pa=0x%08x len=0x%08zx\n",
 			dev->dmabuf.pa, dev->dmabuf.len);
 
 	if (pos < len){
 		len = min((int)count, len - pos);
-		copy_to_user(buf, myline + pos, len);
+		UNCHECKED_COPY( copy_to_user(buf, myline + pos, len) );
 		*posp += len;
 		return len;
 	}else{

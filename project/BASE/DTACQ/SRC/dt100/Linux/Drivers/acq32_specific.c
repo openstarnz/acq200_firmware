@@ -180,7 +180,7 @@ int acq32_userTargetAccessRead16(
         u16 local;
 
         set_rom_word_A01( dev, addr&0x2 );
-        local = readw(addr&=~0x2);
+        local = readw((void __iomem*)(addr&=~0x2));
         put_user( local, &caller_arg->data.w );
 
         PDEBUGL(4)( "Read16 readw(%lx) %x\n", addr, local );
@@ -203,7 +203,7 @@ int acq32_userTargetAccessWrite16(
         
         get_user( local, &caller_arg->data.w ); 
         set_rom_word_A01( dev, addr&0x2 );    
-        writew( local, addr&=~0x2 ); 
+        writew( local, (void __iomem*)(addr&=~0x2) ); 
         PDEBUGL(4)( "Write16 writew( %x, %lx )\n", local, addr );
         return 0;
     }else{
@@ -220,7 +220,7 @@ int acq32_userTargetAccessRead32(
     unsigned long addr = getTargetP( inode, dev, caller_arg->offset );
     
     if ( addr ){
-        u32 value = readl(addr);
+        u32 value = readl((void __iomem*)addr);
 
         put_user( value, &caller_arg->data.l );
 
@@ -242,7 +242,7 @@ int acq32_userTargetAccessWrite32(
         u32 local;
 
         get_user( local, &caller_arg->data.l );
-        writel( local, addr ); 
+        writel( local, (void __iomem*)addr ); 
 
         PDEBUGL(4)( "Write32 writel( %x %lx )\n", local, addr );
         return 0;
@@ -442,12 +442,16 @@ int acq32_mmap( struct file* filp, struct vm_area_struct* vma )
 #if defined(__i386__)
         if (boot_cpu_data.x86 > 3)
             pgprot_val(vma->vm_page_prot) |= _PAGE_PCD;
-#else
-#if defined (__alpha__ )
+#elif defined(__x86_64__)
+        /* device memory: uncached, so flash status polling sees the device
+         * and command writes are not combined or reordered.  Same intent as
+         * the _PAGE_PCD above.
+         */
+        vma->vm_page_prot = pgprot_noncached( vma->vm_page_prot );
+#elif defined(__alpha__)
 #warning "building for alpha"
 #else
 #warning "What have we here ??"
-#endif
 #endif
 
         if ( remap_pfn_range(
@@ -695,11 +699,22 @@ void acq32_enable_rom( struct Acq32Device* device, int enable )
     pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS, rom_addr_after);
     pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr_readback);
 
-    dev_info(&device->p_pci->dev,
-             "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> wrote 0x%08x -> reads 0x%08x%s\n",
-             enable ? "ENABLE" : "DISABLE",
-             rom_addr_before, rom_addr_after, rom_addr_readback,
-             (rom_addr_readback == rom_addr_after) ? "" : "  *MISMATCH*");
+    /* This runs on every ROM access - two lines per board per /proc/acq32
+     * read - so the success case is debug only.  A readback mismatch means
+     * the write did not take and the chip is not in the mode we think, so
+     * that stays visible.
+     */
+    if ( rom_addr_readback != rom_addr_after ){
+        dev_err(&device->p_pci->dev,
+                "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> wrote 0x%08x -> "
+                "reads 0x%08x  *MISMATCH*\n",
+                enable ? "ENABLE" : "DISABLE",
+                rom_addr_before, rom_addr_after, rom_addr_readback);
+    }else{
+        PDEBUGL(2)( "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> 0x%08x\n",
+                    enable ? "ENABLE" : "DISABLE",
+                    rom_addr_before, rom_addr_after );
+    }
 }
 
 
