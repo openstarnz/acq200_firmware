@@ -639,9 +639,9 @@ static int do_help(
     if ( STREQ( verb, MC_GET_HELP ) ){
         APR_PRINTF( PD(filp), "\n" );
         len = acq32_report_version( buf, sizeof(buf) );
-	/* the version report is multi-line and longer than the 80 byte
-	 * APR_PRINTF staging buffer, and it isn't a format string - put it
-	 * on the readbuffer directly.
+	/* The version report is already formatted and may contain '%' characters;
+	 * put it on the readbuffer directly rather than interpreting it as a
+	 * format string.
 	 */
 	acq32_path_readbuffer_put( PD(filp), buf, len );
 	return 0;
