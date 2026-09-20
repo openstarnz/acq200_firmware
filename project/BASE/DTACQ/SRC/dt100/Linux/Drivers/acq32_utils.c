@@ -166,8 +166,8 @@ int acq32_path_readbuffer_put( struct Acq32Path* path, char* cli_data, int nbyte
  *
  * Sized from the worst-case formatted length over all current call sites. The
  * 92 command-parser call sites are in acq32_command.c; acq32_simul.c has nine
- * additional literal-only call sites. Twelve command-parser calls can exceed
- * the 80 bytes this used to be:
+ * additional literal-only call sites. Twelve command-parser calls exceed
+ * 80 bytes:
  *
  *   111  getChannelMask=%s      "getChannelMask=" + a 96 char ACQ196 mask
  *   119  getVoltsRange ...      eight %d, each worst case INT_MIN
