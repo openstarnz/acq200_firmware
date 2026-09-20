@@ -3057,7 +3057,7 @@ streaming_rowdev_read(
     )
 {
     struct Acq32Device *device = PDEV( filp );
-    size_t return_count;
+    ssize_t return_count;
 
 
     // do some stats on streambuf 
@@ -3085,24 +3085,8 @@ streaming_rowdev_read(
 
     return_count = acq32_streaming_rowdev_read_workfunc( device );
 
-    /*
-     * WORKTODO: this test is dead and is deliberately left dead.
-     *
-     * return_count is size_t (unsigned), so "return_count < 0" is provably
-     * always false and gcc optimises it out.  acq32_streaming_rowdev_read_workfunc()
-     * does return -ETIMEDOUT, and that error is therefore swallowed here:
-     * the -ETIMEDOUT is overwritten by device->appbuf.count_actual a few lines
-     * down, and userspace sees a short/zero read (EOF) rather than an error.
-     *
-     * DO NOT "tidy" this by widening return_count to ssize_t.  That looks like
-     * the obvious fix but it is a behaviour change in a live streaming path:
-     * readers that today treat a timeout as end-of-stream would start getting
-     * -ETIMEDOUT back from read(2).  Changing it needs the userspace side
-     * (see Apps/ stream readers) audited first.
-     *
-     * Note the %zu conversions in the PDEBUGL() calls below were added during
-     * the 2.6.32 port to match this size_t declaration, so they cement it -
-     * they have to change together with the type, not after it.
+    /* workfunc returns -ETIMEDOUT on timeout; propagate it rather than
+     * letting count_actual overwrite it below and report EOF.
      */
     if ( return_count < 0 ) return return_count;
 
@@ -3115,12 +3099,12 @@ streaming_rowdev_read(
     device->appbuf.count_max = 
         device->appbuf.count_actual = 0;
 
-    PDEBUGL(2)(  " returning %zu\n", return_count );
+    PDEBUGL(2)(  " returning %zd\n", return_count );
 
     filp->f_pos += return_count;         /* fpos in bytes not samples ??? */
 
     if ( return_count < 450 ) {
-        PDEBUGL(0)(  " rtn %zu buf %zu available %d\n",
+        PDEBUGL(0)(  " rtn %zd buf %zu available %d\n",
                     return_count, count, streamNumEntries( &device->streambuf ) );
     }
     return return_count;
