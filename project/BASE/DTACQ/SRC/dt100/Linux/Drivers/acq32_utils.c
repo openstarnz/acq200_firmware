@@ -120,7 +120,7 @@ static int readbuffer_put( struct ReadBuffer* rb, char* cli_data, int nbytes )
 {
     int ibyte;
 
-    for ( ibyte = 0; ibyte != nbytes && !IS_FULL( rb ); ++ibyte ){
+    for ( ibyte = 0; ibyte < nbytes && !IS_FULL( rb ); ++ibyte ){
         PUT( rb, cli_data[ibyte] );
     }
     return ibyte;
@@ -211,6 +211,12 @@ void acq32_path_readbuffer_printf( struct Acq32Path* path, const char* fmt, ... 
      * the inline snprintf() did.  Nothing should hit this - if something does,
      * the call site is new and APR_PRINTF_BUFLEN needs revisiting.
      */
+    if ( len < 0 ){
+        /* vsnprintf() failed - emit nothing rather than passing a negative
+         * length down to readbuffer_put().
+         */
+        return;
+    }
     if ( len >= (int)sizeof(local) ){
         printk( KERN_WARNING
                 "acq32: APR_PRINTF truncated, needed %d of %d bytes: %s\n",

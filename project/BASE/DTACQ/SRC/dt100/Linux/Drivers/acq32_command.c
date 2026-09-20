@@ -3154,7 +3154,12 @@ static ssize_t _read_command(
    
     filp->f_pos += nuser;
 
-    lbuf[nuser] = '\0';
+    /* lbuf holds only the final chunk, but nuser is the running total across
+     * loop iterations and is bounded by count and the 4096 byte ring, not by
+     * LBUFLEN - so terminating at lbuf[nuser] can write up to 3K past the
+     * buffer and destroy the frame.  Bound it.
+     */
+    lbuf[ nuser < LBUFLEN ? nuser : LBUFLEN - 1 ] = '\0';
     PDEBUGL(3)( " ends %s\n", nuser? lbuf: "EOF" );
 
     return nuser;
