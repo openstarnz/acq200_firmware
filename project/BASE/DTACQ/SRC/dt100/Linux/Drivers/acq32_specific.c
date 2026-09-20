@@ -443,10 +443,11 @@ int acq32_mmap( struct file* filp, struct vm_area_struct* vma )
         if (boot_cpu_data.x86 > 3)
             pgprot_val(vma->vm_page_prot) |= _PAGE_PCD;
 #elif defined(__x86_64__)
-        /* left at the default cache attribute, as it has been since the
-         * 2.6.32 port.  This MMIO mapping arguably wants pgprot_noncached(),
-         * but that is a behaviour change - not made here.
+        /* device memory: uncached, so flash status polling sees the device
+         * and command writes are not combined or reordered.  Same intent as
+         * the _PAGE_PCD above.
          */
+        vma->vm_page_prot = pgprot_noncached( vma->vm_page_prot );
 #elif defined(__alpha__)
 #warning "building for alpha"
 #else
