@@ -699,11 +699,22 @@ void acq32_enable_rom( struct Acq32Device* device, int enable )
     pci_write_config_dword(device->p_pci, PCI_ROM_ADDRESS, rom_addr_after);
     pci_read_config_dword(device->p_pci, PCI_ROM_ADDRESS, &rom_addr_readback);
 
-    dev_info(&device->p_pci->dev,
-             "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> wrote 0x%08x -> reads 0x%08x%s\n",
-             enable ? "ENABLE" : "DISABLE",
-             rom_addr_before, rom_addr_after, rom_addr_readback,
-             (rom_addr_readback == rom_addr_after) ? "" : "  *MISMATCH*");
+    /* This runs on every ROM access - two lines per board per /proc/acq32
+     * read - so the success case is debug only.  A readback mismatch means
+     * the write did not take and the chip is not in the mode we think, so
+     * that stays visible.
+     */
+    if ( rom_addr_readback != rom_addr_after ){
+        dev_err(&device->p_pci->dev,
+                "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> wrote 0x%08x -> "
+                "reads 0x%08x  *MISMATCH*\n",
+                enable ? "ENABLE" : "DISABLE",
+                rom_addr_before, rom_addr_after, rom_addr_readback);
+    }else{
+        PDEBUGL(2)( "enable_rom %s: PCI_ROM_ADDRESS 0x%08x -> 0x%08x\n",
+                    enable ? "ENABLE" : "DISABLE",
+                    rom_addr_before, rom_addr_after );
+    }
 }
 
 
