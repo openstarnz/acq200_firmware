@@ -2358,6 +2358,13 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
         return rc;
     }
 
+    /* pci_enable_device() leaves the bus-master bit clear.  The board
+     * DMAs fetched data into the channel buffers and its reply frames
+     * into the host message buffer, so it must be allowed to master the
+     * bus.  pci_disable_device() clears the bit again, on the error
+     * paths below and in acq32_pci_remove(). */
+    pci_set_master( p_dev );
+
     /* Claim all BARs through the PCI subsystem so no other driver
      * (notably drivers/mtd/maps/pci.c, which also matches DEC 21285)
      * can probe the same hardware behind our back.  This subsumes the
