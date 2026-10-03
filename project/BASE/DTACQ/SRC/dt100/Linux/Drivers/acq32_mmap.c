@@ -396,7 +396,10 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 	    rc = -ENODEV;
 	    break;
 	}
-	cm->buffers[ibuf] = (void*)__GET_FREE_PAGES( GFP_KERNEL, PAGE_ORDER );
+	/* GFP_DMA32: the board is a 32 bit bus master and is handed each
+	 * buffer's address in the 32 bit HostRequestDataRecord.pci field. */
+	cm->buffers[ibuf] = (void*)__GET_FREE_PAGES(
+		GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
 
 	if ( cm->buffers[ibuf] == (void*)0 ){
 	    PDEBUG( "ERROR __get_free_pages() failed Should set ENOMEM\n" );
