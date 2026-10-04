@@ -839,6 +839,9 @@ struct Acq32Device {
 	int i2o_packets_incoming;
 	int i2o_packets_returned;
 	int i2o_packets_discarded;
+	int i2o_packets_recovered;      // garbled FIFO reads replaced from mbox 2
+	u32 i2o_recovered_mfa;          // last mfa taken from mbox 2, not yet seen on the FIFO
+	spinlock_t i2o_isr_lock;        // guards i2o_recovered_mfa and i2o_last_in
 	void* i2o_last_in;
 		
 	int i2o_packets_outgoing;       // # command packets sent
@@ -1215,6 +1218,7 @@ extern long acq32_big_buf_base;  // PGM:TEMP base addr of big streambuf
 extern long acq32_big_buf_len;
 
 extern int acq32_dumdma_to;        // DUMDMA timeout - crank up if debugging
+extern int acq32_hrdr_per_message; // records per LOCALBUF fetch message
 
 extern int acq32_fill_vma;        // debug aid - fill vma on allocate
 extern int acq32_max_channels;    // override to set max channels on all brds 

@@ -2047,6 +2047,7 @@ static int acq32_GetNumChannelsAll( struct Acq32Path* path )
 static int acq32_OnOpen( struct Acq32Path* path )
 {
 	struct Acq32Device *device = path->device;
+	unsigned long flags;
 
 	PDEBUGL(2)( "acq32_OnOpen() %d\n", device->use_interrupts );
 
@@ -2075,6 +2076,11 @@ static int acq32_OnOpen( struct Acq32Path* path )
 			1,
 			(unsigned*)&device->dmabuf.pa,
 			(unsigned*)&device->dmabuf.len );
+		/* forget the frames seen before SET_HOST_DMABUF */
+		spin_lock_irqsave( &device->m_dpd.i2o_isr_lock, flags );
+		device->m_dpd.i2o_recovered_mfa = 0;
+		device->m_dpd.i2o_last_in = NULL;
+		spin_unlock_irqrestore( &device->m_dpd.i2o_isr_lock, flags );
 
 		/*
                  * # channels won't change from code to code
@@ -3297,6 +3303,7 @@ int acq32_genericCoreDevInit( struct Acq32Device* device )
 	PDEBUGL(2)(  "1 \n" );
 
 	rchInit( device );
+	spin_lock_init( &device->m_dpd.i2o_isr_lock );
 
         /* set up control struct for streaming isr bh */
 
@@ -3594,9 +3601,62 @@ int acq32_fetchDataToLocalBuffer(
     int start,
     int stride
     )
+/*
+ * With several records in one message the board posts each reply while it
+ * is still working through the rest, and those replies can come back off
+ * the outbound FIFO garbled, and _acq32_incoming_i2o_isr recovers them
+ * from mailbox 2.  By default (0) everything goes in one message, as in
+ * the 2.4 driver.  If acq32_hrdr_per_message is set, send at most that
+ * many records at a time, split on buffer boundaries, so that only one
+ * reply is normally in flight.  Each message is sent only after the
+ * previous one has completed, and a failure or timeout on any of them
+ * fails the whole request.
+ */
 {
-	return _acq32_fetchDataToLocalBuffer(
-		PD(file), channel, buffer, nsamples, start, stride );
+	struct Acq32Path* path = PD(file);
+	ChannelMapping* mapping = path->channel_maps[0];
+	int spb = SAMPLES_PER_BUFFER(channel);
+	int nbuf = acq32_hrdr_per_message;
+	int total = 0;
+
+	if ( nbuf <= 0 || channel == ALLCHANNELS || mapping == NULL ){
+		return _acq32_fetchDataToLocalBuffer(
+			path, channel, buffer, nsamples, start, stride );
+	}
+	if ( nbuf > (int)MESSAGE_HRDR_LEN ){
+		nbuf = (int)MESSAGE_HRDR_LEN;
+	}
+
+	while ( nsamples > 0 ){
+		unsigned long off =
+			((unsigned long)buffer - mapping->vma->vm_start)/2;
+		int delta = (int)(off % spb);
+		int chunk = nbuf*spb - delta;
+		int rv;
+
+		if ( chunk > nsamples ){
+			chunk = nsamples;
+		}
+		rv = _acq32_fetchDataToLocalBuffer(
+			path, channel, buffer, chunk, start, stride );
+		if ( rv < 0 ){
+			return rv;
+		}
+		total += rv;
+		if ( rv < chunk ){
+			/* keep the count contiguous from the caller's buffer */
+			break;
+		}
+		/*
+		 * The records of an unaligned request start at the buffer
+		 * boundary, delta samples before buffer, so that message
+		 * covered chunk+delta samples from start.
+		 */
+		buffer += chunk;
+		nsamples -= chunk;
+		start += (chunk + delta)*stride;
+	}
+	return total;
 }
 
 
