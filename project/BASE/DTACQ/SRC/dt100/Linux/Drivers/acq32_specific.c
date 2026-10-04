@@ -503,6 +503,22 @@ static inline int duff_mfa( struct Acq32Device* device, u32 mfa, char* id )
 #endif
 }
 
+/*
+ * The firmware cuts the host dmabuf into 256 equal outbound frames
+ * (i2o_initOutboundAcq32Push( 256, pa, len ) in boot66*.axf), so a good
+ * MFA is the bus address of one of them.  Anything else is garbage off
+ * the FIFO, and phys_to_virt() would turn it into a wild pointer.
+ */
+#define ACQ32_OUTBOUND_FRAMES 256
+
+static int mfa_is_outbound_frame( struct Acq32Device* device, u32 mfa )
+{
+	u32 offset = mfa - device->dmabuf.pa;
+
+	return offset < device->dmabuf.len &&
+		offset % (device->dmabuf.len/ACQ32_OUTBOUND_FRAMES) == 0;
+}
+
 static void _acq32_incoming_i2o_isr( struct Acq32Device* device )
 {
     unsigned mfa;
@@ -544,6 +560,17 @@ static void _acq32_incoming_i2o_isr( struct Acq32Device* device )
 	if ( old_mfa == mfa ){
 	    PDEBUGL(2)(  "WARNING Matching mfa 0x%08x\n", mfa );
 	    continue;
+	}
+
+	if ( !mfa_is_outbound_frame( device, mfa ) ){
+		/* not returned to the board: it would put the bad address
+		 * on its free list and DMA a later reply there */
+		device->m_dpd.i2o_packets_discarded++;
+		if ( printk_ratelimit() ){
+			printk( KERN_ERR "acq32: discarding bad mfa 0x%08x\n",
+				mfa );
+		}
+		continue;
 	}
 
 	acq32_incoming_i2o_isr(device, mfa);
