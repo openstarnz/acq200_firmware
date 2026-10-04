@@ -1174,6 +1174,7 @@ int acq32_debug2_read_proc(
         D_PRINTF   ( "%6d",      m_dpd.i2o_packets_incoming  );
         D_PRINTF   ( "%6d",      m_dpd.i2o_packets_returned  );
         D_PRINTF   ( "%6d",      m_dpd.i2o_packets_discarded );
+        D_PRINTF   ( "%6d",      m_dpd.i2o_packets_recovered );
         D_PRINTF   ( "0x%p",     m_dpd.i2o_last_in           );
         D_PRINTF   ( "0x%p\n",   dmabuf.va                  );
         D_PRINTF   ( "%d",       streambuf.def.iput              );

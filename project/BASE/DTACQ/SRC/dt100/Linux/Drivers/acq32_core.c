@@ -2047,6 +2047,7 @@ static int acq32_GetNumChannelsAll( struct Acq32Path* path )
 static int acq32_OnOpen( struct Acq32Path* path )
 {
 	struct Acq32Device *device = path->device;
+	unsigned long flags;
 
 	PDEBUGL(2)( "acq32_OnOpen() %d\n", device->use_interrupts );
 
@@ -2075,6 +2076,11 @@ static int acq32_OnOpen( struct Acq32Path* path )
 			1,
 			(unsigned*)&device->dmabuf.pa,
 			(unsigned*)&device->dmabuf.len );
+		/* forget the frames seen before SET_HOST_DMABUF */
+		spin_lock_irqsave( &device->m_dpd.i2o_isr_lock, flags );
+		device->m_dpd.i2o_recovered_mfa = 0;
+		device->m_dpd.i2o_last_in = NULL;
+		spin_unlock_irqrestore( &device->m_dpd.i2o_isr_lock, flags );
 
 		/*
                  * # channels won't change from code to code
@@ -3297,6 +3303,7 @@ int acq32_genericCoreDevInit( struct Acq32Device* device )
 	PDEBUGL(2)(  "1 \n" );
 
 	rchInit( device );
+	spin_lock_init( &device->m_dpd.i2o_isr_lock );
 
         /* set up control struct for streaming isr bh */
 

@@ -521,60 +521,74 @@ static int mfa_is_outbound_frame( struct Acq32Device* device, u32 mfa )
 
 static void _acq32_incoming_i2o_isr( struct Acq32Device* device )
 {
+    struct DriverPrivate* dp = &device->m_dpd;
     unsigned mfa;
     unsigned old_mfa = 0;
-    
-    for( ; (mfa = readl( CSR( device, PCI_I2O_OUTBOUND_FIFO ))) !=
+    int recovered_here = 0;
+    int nread;
+
+    spin_lock( &dp->i2o_isr_lock );
+    /*
+     * Bounded so a FIFO that never reads empty cannot hold the CPU.  The
+     * bound is tested before the read, so nothing is popped and dropped:
+     * entries left behind keep the post interrupt asserted.
+     */
+    for( nread = 0;
+	 nread < 2*ACQ32_OUTBOUND_FRAMES &&
+	 (mfa = readl( CSR( device, PCI_I2O_OUTBOUND_FIFO ))) !=
            PCI_I2O_INVALID_MFA;
-	 old_mfa = mfa ){
-
-	if ( old_mfa == mfa ){
-		PDEBUGL(2)(  "WARNING Matching mfa 0x%08x\n", mfa );
-		continue;
-	}
-	PDEBUGL(1)(  " 0x%08x\n", mfa );
-
-        if ( duff_mfa( device, mfa, "isr" ) ){
-
-/*
- * gross hack to work around I2O / SDRAM unreliability
- * the MFA is stored in mbox 2 as well ...
- * WARNING: only compatible with Build 1532 and newer
- */
-	    unsigned mfa2;
-         
-	    device->get_mailbox( device, 2, &mfa2 );
-             
-	    if ( mfa2 != mfa ){
-		PDEBUG(  "mfas dont match, use mbox 0x%08x 0x%08x\n",
-			mfa, mfa2 );
-		if ( duff_mfa( device, mfa2, "mbox" ) ){
-		    PDEBUG(  "bodged mbox mfa is duff too 0x%08x\n",
-			    mfa2 );
-		    return;
-		}
-		mfa = mfa2;
-	    }         
-	}
-
-	if ( old_mfa == mfa ){
-	    PDEBUGL(2)(  "WARNING Matching mfa 0x%08x\n", mfa );
-	    continue;
-	}
+	 ++nread, old_mfa = mfa ){
 
 	if ( !mfa_is_outbound_frame( device, mfa ) ){
-		/* not returned to the board: it would put the bad address
-		 * on its free list and DMA a later reply there */
-		device->m_dpd.i2o_packets_discarded++;
-		if ( printk_ratelimit() ){
-			printk( KERN_ERR "acq32: discarding bad mfa 0x%08x\n",
-				mfa );
-		}
+	    /*
+	     * A read that overlaps the board working on a multi-record
+	     * fetch can return a word of board SDRAM instead of the post
+	     * list entry, and the entry is popped all the same.  Firmware
+	     * B1532 and later copies every posted MFA to mailbox 2, so
+	     * take the frame from there.  Mailbox 2 is also the A4
+	     * command argument, hence the frame check on it too.  The
+	     * garbled value itself is never returned to the board: it
+	     * would go on the free list and a later reply be DMAed there.
+	     */
+	    unsigned mfa2;
+
+	    device->get_mailbox( device, BP_MB_A4, &mfa2 );
+	    dp->i2o_packets_discarded++;
+	    if ( printk_ratelimit() ){
+		printk( KERN_ERR "acq32: bad mfa 0x%08x, mbox2 0x%08x\n",
+			mfa, mfa2 );
+	    }
+	    if ( !mfa_is_outbound_frame( device, mfa2 ) ||
+		 mfa2 == (u32)(unsigned long)dp->i2o_last_in ||
+		 mfa2 == dp->i2o_recovered_mfa ){
 		continue;
+	    }
+	    mfa = mfa2;
+	    dp->i2o_recovered_mfa = mfa2;
+	    dp->i2o_packets_recovered++;
+	    recovered_here = 1;
+	}else if ( mfa == dp->i2o_recovered_mfa ){
+	    /* the garbled read did not pop it after all */
+	    dp->i2o_recovered_mfa = 0;
+	    continue;
+	}else if ( mfa == old_mfa ){
+	    PDEBUGL(2)(  "WARNING Matching mfa 0x%08x\n", mfa );
+	    continue;
+	}else if ( !recovered_here ){
+	    /*
+	     * An unpopped copy of the recovered frame is already queued
+	     * when it is recovered, so it turns up in the same drain,
+	     * possibly behind older frames.  Keep it for the rest of this
+	     * drain and forget it in the next, long before the board can
+	     * post that frame again for real.
+	     */
+	    dp->i2o_recovered_mfa = 0;
 	}
 
+	PDEBUGL(1)(  " 0x%08x\n", mfa );
 	acq32_incoming_i2o_isr(device, mfa);
     }
+    spin_unlock( &dp->i2o_isr_lock );
 }
 
 /*
