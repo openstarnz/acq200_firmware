@@ -545,7 +545,7 @@ MPI( acq32_is_nonblocking,   1, "set TRUE for non blocking IO (1)" );
 MPL( acq32_big_buf_base,     0, "set TRUE for dma->bigbuf (deprecated) (0) " );
 MPL( acq32_big_buf_len,      0, "set LENGTH of dma->bigbuf (deprecated)(0) " );
 
-MPI( acq32_dumdma_to,      200, "DUMDMA timout - turn up if debugs on (200) ");
+MPI( acq32_dumdma_to,     2000, "DUMDMA timeout - turn up if debugs on (2000) ");
 MPI( acq32_fill_vma,         0, "fill vma with channel id data (for debug) " );
 MPI( acq32_max_channels,     ACQ32_MAX_CHANNELS, "default channnel count" );
 //WORKTODO - should come from board
@@ -2357,6 +2357,13 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
         PDEBUG( "pci_enable_device failed: %d\n", rc );
         return rc;
     }
+
+    /* pci_enable_device() leaves the bus-master bit clear.  The board
+     * DMAs fetched data into the channel buffers and its reply frames
+     * into the host message buffer, so it must be allowed to master the
+     * bus.  pci_disable_device() clears the bit again, on the error
+     * paths below and in acq32_pci_remove(). */
+    pci_set_master( p_dev );
 
     /* Claim all BARs through the PCI subsystem so no other driver
      * (notably drivers/mtd/maps/pci.c, which also matches DEC 21285)

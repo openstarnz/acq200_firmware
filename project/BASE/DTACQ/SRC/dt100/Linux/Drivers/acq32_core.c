@@ -3564,11 +3564,16 @@ static int _acq32_fetchDataToLocalBuffer(
         PDEBUGL(1)(  " returns SUCCESS\n" );
         rv_numsamples = path->return_samples;
     }else{
-	PDEBUGL(1)(  "WARNING: timeout, resetting driver (could be dodgy)\n" );
+	/* Unhook our handler; a late reply is then discarded by the BH.
+	 * coreDevInit() is not a recovery step: it ioremaps the BARs again
+	 * over the live mappings, leaking the old ones, and re-initialises
+	 * the BH work item and the handler-list lock that the interrupt
+	 * path may be using at that moment.
+	 */
+	PDEBUGL(1)(  "WARNING: timeout\n" );
         dumpRH( rch );
         rchRemove( rch );
         memset( rch, 0, sizeof(struct ReturnCommandHandler) );
-	path->device->coreDevInit(path->device);
         rv_numsamples = -ETIMEDOUT;
     }
 

@@ -132,15 +132,12 @@
 
 /*
  * define a vma object that suits us.
- * crib from Rubini "scullp"
- * But there's a different - Rubini allocates memory PAGE_ORDER 0
- * We want bigger buffers. trial and error finds that
- * nopage() MUST increment count for FIRST page in buffer
- * nopage() MUST NOT increment count for other pages in buffer
- *
- * so now you know!
- * generally, the less done with the mem_map[] the better.
- * in particular, I did not understand why alternate page entries seem to be blank.
+ * Each buffer is one PAGE_ORDER allocation: physically contiguous because
+ * the board DMAs into it, but not a compound page, so only its first page
+ * carries a reference count.  The buffers are therefore mapped with
+ * remap_pfn_range() at mmap() time: the VM then never takes or drops
+ * references on these pages, and acq32_vma_release() frees each buffer
+ * exactly as it was allocated.
  */
 #ifdef LINUX_NEW_PCI
 #define PDEBUG_PAGE( lvl, page ) \
@@ -218,26 +215,7 @@ static void acq32_vma_release(struct vm_area_struct* vma )
         for ( ibuf = 0; ibuf != MAX_BUFFERS_IN_CHANNEL &&
 		  cm->buffers[ibuf] != (void*)0;     ++ibuf ){
 #ifdef LINUX_NEW_PCI
-            struct page* page = virt_to_page( cm->buffers[ibuf] );
-            int count = page_count( page );
-
-            /* The fault handler calls get_page() on the first page of
-             * each DMABUF_SIZE-aligned buffer; drop the matching refs
-             * here so __free_pages() will actually free.  set_page_count()
-             * was used in the 2.4 source to slam the count to 1; it's
-             * not exported in 2.6, and put_page() is the correct API. */
-            while ( page_count( page ) > 1 ){
-                put_page( page );
-            }
-            if ( count != 1 ){
-                PDEBUGL(1)( " BUFFER:%p %4lx count %d fixed to %d\n",
-			    cm->buffers[ibuf],
-			    (long)page_to_pfn(page),
-			    count,
-			    page_count( page )
-		    );
-            }
-            PDEBUG_PAGE( 5, page );
+            PDEBUG_PAGE( 5, virt_to_page( cm->buffers[ibuf] ) );
 #else
 
 	    int count = atomic_read(
@@ -271,69 +249,15 @@ static void acq32_vma_release(struct vm_area_struct* vma )
 }
 
 /*
- * retrieve tha page from the path:
- * first find the channel map, then calc the buffer number
- * once we have the buffer, calc the page within the buffer ...
- * viva 500+ bogomips!
- */
-
-/*
- * 2.6.23+ replaced ->nopage with ->fault.  Old contract:
- *     struct page *nopage(vma, address, type) — return the page.
- * New contract:
- *     int fault(vma, vmf) — set vmf->page, return 0 (or VM_FAULT_SIGBUS).
- * The body below is the original page-lookup logic, just adapted to
- * stash the result in vmf->page.
+ * Every page of the vma is mapped by acq32_mmap_channel(), so a fault here
+ * is an access the mapping does not cover.  Without a fault handler the VM
+ * would quietly back the address with an anonymous page.
  */
 static int acq32_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-	struct Acq32Path *path = getPathFromVma(vma);
-	int imap = getChannelMapIndex(path, vma);
-	unsigned long address = (unsigned long)vmf->virtual_address;
+	PDEBUGL(4)("%p 0x%08lx\n", vma, (unsigned long)vmf->virtual_address);
 
-	PDEBUGL(4)("%p 0x%08lx %d\n", vma, address, imap);
-
-	if (imap == -1) {
-		return VM_FAULT_SIGBUS;
-	} else {
-		ChannelMapping *cm = path->channel_maps[imap];
-
-		unsigned long offset      = address - vma->vm_start;
-		int ibuf                  = offset / DMABUF_SIZE;
-		int page_offset_in_buffer = offset - ibuf * DMABUF_SIZE;
-
-		unsigned long page_addr = (unsigned long)
-			(cm->buffers[ibuf] + page_offset_in_buffer);
-		struct page *page;
-
-		PDEBUGL(5)("page_offset_in_buffer %d page_addr 0x%08lx\n",
-			   page_offset_in_buffer, page_addr);
-
-		PDUMPL(5, , (void *)page_addr);
-
-		if ((acq32_fill_vma > 1 && page_offset_in_buffer == 0) ||
-		    acq32_fill_vma > 2) {
-			sprintf((char *)page_addr,
-				"PAGE 0x%08lx offset 0x%08lx ibuf%d\n",
-				page_addr, offset, ibuf);
-		}
-
-		page = virt_to_page(page_addr);
-
-		PDEBUGL(5)("off:%06ld ibuf:%d page_addr:0x%08lx page:%p\n",
-			   offset, ibuf, page_addr, page);
-		PDUMPL(5, , page);
-
-		/* Original 2.4 nopage incremented refcount only for the first
-		 * page of each buffer.  Preserve that — vma_release relies on
-		 * it to know how many put_page() calls are needed. */
-		if (page_offset_in_buffer == 0) {
-			get_page(page);
-		}
-
-		vmf->page = page;
-		return 0;
-	}
+	return VM_FAULT_SIGBUS;
 }
 
 
@@ -392,6 +316,23 @@ static void testFill( ChannelMapping* cm, int ichan )
 //#undef FN
 }
 
+static void markPages( ChannelMapping* cm, unsigned long vsize )
+// label the first page of each buffer (every page if acq32_fill_vma > 2)
+{
+    unsigned long offset;
+
+    for ( offset = 0; offset < vsize; offset += PAGE_SIZE ){
+        int ibuf = offset / DMABUF_SIZE;
+        unsigned long page_offset_in_buffer = offset - ibuf * DMABUF_SIZE;
+        char* page_addr = cm->buffers[ibuf] + page_offset_in_buffer;
+
+        if ( page_offset_in_buffer == 0 || acq32_fill_vma > 2 ){
+            sprintf( page_addr, "PAGE 0x%08lx offset 0x%08lx ibuf%d\n",
+                     (unsigned long)page_addr, offset, ibuf );
+        }
+    }
+}
+
 int acq32_copyToChannelMap(
 	ChannelMapping* cm, 
 	void *src,
@@ -439,28 +380,44 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
     if ( imap == -1 ){
         return -ENODEV;
     }
-    cm = path->channel_maps[imap];    
+    cm = path->channel_maps[imap];
     cm->vma = vma;
     vma->vm_ops = &acq32_channel_vm_ops;
     storeFileInVma( vma, filp );
-   
+#ifdef LINUX_NEW_PCI
+    /* The buffers belong to this vma alone: a fork()ed copy would keep
+     * mapping them after acq32_vma_release() has freed them. */
+    vma->vm_flags |= VM_DONTCOPY;
+#endif
+
     for (ibuf=allocated=0; allocated<vsize; ++ibuf, allocated += DMABUF_SIZE) {
 	if ( ibuf >= MAX_BUFFERS_IN_CHANNEL ){
 	    PDEBUG( "ERROR: ran out of buffers [%d]. ret ENODEV\n", ibuf );
-            acq32_vma_release( vma );		    
 	    rc = -ENODEV;
 	    break;
 	}
-	cm->buffers[ibuf] = (void*)__GET_FREE_PAGES( GFP_KERNEL, PAGE_ORDER );
-		
+	/* GFP_DMA32: the board is a 32 bit bus master and is handed each
+	 * buffer's address in the 32 bit HostRequestDataRecord.pci field. */
+	cm->buffers[ibuf] = (void*)__GET_FREE_PAGES(
+		GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
+
 	if ( cm->buffers[ibuf] == (void*)0 ){
 	    PDEBUG( "ERROR __get_free_pages() failed Should set ENOMEM\n" );
-	    acq32_vma_release( vma );
 	    rc = -ENOMEM;
 	    break;
-	}else{		
+	}else{
 #ifdef LINUX_NEW_PCI
-	    ;
+	    unsigned long len = min_t( unsigned long,
+				       vsize - allocated, DMABUF_SIZE );
+
+	    if ( remap_pfn_range(
+		     vma, vma->vm_start + allocated,
+		     page_to_pfn( virt_to_page( cm->buffers[ibuf] ) ),
+		     len, vma->vm_page_prot ) ){
+		PDEBUG( "ERROR remap_pfn_range() failed\n" );
+		rc = -EAGAIN;
+		break;
+	    }
 #else
 	    unsigned long map_nr = MAP_NR( cm->buffers[ibuf] );
 	    int ipage;
@@ -483,6 +440,9 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
     }else{
         if ( acq32_fill_vma ){
             testFill( cm, CHANNEL( path->minor ) );
+	}
+        if ( acq32_fill_vma > 1 ){
+            markPages( cm, vsize );
 	}
     }
 
