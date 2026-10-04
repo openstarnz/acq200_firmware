@@ -545,7 +545,7 @@ MPI( acq32_is_nonblocking,   1, "set TRUE for non blocking IO (1)" );
 MPL( acq32_big_buf_base,     0, "set TRUE for dma->bigbuf (deprecated) (0) " );
 MPL( acq32_big_buf_len,      0, "set LENGTH of dma->bigbuf (deprecated)(0) " );
 
-MPI( acq32_dumdma_to,      200, "DUMDMA timout - turn up if debugs on (200) ");
+MPI( acq32_dumdma_to,     2000, "DUMDMA timout - turn up if debugs on (2000) ");
 MPI( acq32_fill_vma,         0, "fill vma with channel id data (for debug) " );
 MPI( acq32_max_channels,     ACQ32_MAX_CHANNELS, "default channnel count" );
 //WORKTODO - should come from board
