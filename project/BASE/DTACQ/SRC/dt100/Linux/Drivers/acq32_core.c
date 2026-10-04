@@ -3604,10 +3604,13 @@ int acq32_fetchDataToLocalBuffer(
 /*
  * With several records in one message the board posts each reply while it
  * is still working through the rest, and those replies can come back off
- * the outbound FIFO garbled (_acq32_incoming_i2o_isr).  Send at most
- * acq32_hrdr_per_message records at a time, split on buffer boundaries.
- * Each message is sent only after the previous one has completed, and a
- * failure or timeout on any of them fails the whole request.
+ * the outbound FIFO garbled, and _acq32_incoming_i2o_isr recovers them
+ * from mailbox 2.  By default (0) everything goes in one message, as in
+ * the 2.4 driver.  If acq32_hrdr_per_message is set, send at most that
+ * many records at a time, split on buffer boundaries, so that only one
+ * reply is normally in flight.  Each message is sent only after the
+ * previous one has completed, and a failure or timeout on any of them
+ * fails the whole request.
  */
 {
 	struct Acq32Path* path = PD(file);
