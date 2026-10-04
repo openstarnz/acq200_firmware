@@ -1215,6 +1215,7 @@ extern long acq32_big_buf_base;  // PGM:TEMP base addr of big streambuf
 extern long acq32_big_buf_len;
 
 extern int acq32_dumdma_to;        // DUMDMA timeout - crank up if debugging
+extern int acq32_hrdr_per_message; // records per LOCALBUF fetch message
 
 extern int acq32_fill_vma;        // debug aid - fill vma on allocate
 extern int acq32_max_channels;    // override to set max channels on all brds 

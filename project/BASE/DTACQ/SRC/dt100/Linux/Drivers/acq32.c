@@ -546,6 +546,7 @@ MPL( acq32_big_buf_base,     0, "set TRUE for dma->bigbuf (deprecated) (0) " );
 MPL( acq32_big_buf_len,      0, "set LENGTH of dma->bigbuf (deprecated)(0) " );
 
 MPI( acq32_dumdma_to,     2000, "DUMDMA timeout - turn up if debugs on (2000) ");
+MPI( acq32_hrdr_per_message, 1, "max data records per LOCALBUF fetch message, 0 = no limit (1) " );
 MPI( acq32_fill_vma,         0, "fill vma with channel id data (for debug) " );
 MPI( acq32_max_channels,     ACQ32_MAX_CHANNELS, "default channnel count" );
 //WORKTODO - should come from board
@@ -1209,6 +1210,7 @@ int acq32_globs_read_proc(
 
     G_PRINTF(  acq32_use_interrupts, "%d" );
     G_PRINTF(  acq32_double_tap, "%d" );
+    G_PRINTF(  acq32_hrdr_per_message, "%d" );
     G_PRINTF(  acq32_simulate, "%d" );
     G_PRINTF(  acq32_gate_hi, "%d" );
     G_PRINTF(  acq32_extclock, "%d" );
