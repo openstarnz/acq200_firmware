@@ -577,7 +577,15 @@ static int sim_SetMode(
 #define PP_STATUS (PORTA+1)
 
 
-#define GATE_HI     ((inb_p(PP_STATUS)&0X20)!=0)
+/*
+ * The parallel port carries the external gate and clock in and debug
+ * levels out. With acq32_extclock=0 there is no external signal: the port
+ * is not touched and the gate always reads as active.
+ */
+#define PP_OUT(value) \
+    do { if ( acq32_extclock ) outb( (value), PP_DATA ); } while (0)
+#define GATE_HI \
+    (acq32_extclock? ((inb_p(PP_STATUS)&0X20)!=0): (acq32_gate_hi!=0))
 #define GATE_ON     (GATE_HI==acq32_gate_hi)
 #define GATE_OFF    (!GATE_ON)
 
@@ -624,8 +632,8 @@ void sim_SoftTransientTimerTask( void* args )
     struct Acq32Device* device = (struct Acq32Device*)args;
     struct DriverPrivate* dp = &device->m_dpd;
     static int istatus;
-  
-    idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+
+    idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 
     if ( dp->nsamples_actual.post < dp->nsamples_requested.post &&
 	 dp->state != ST_STOP                                           ){
@@ -661,7 +669,7 @@ void sim_GatedTransientTimerTask( void* args )
     switch( dp->state ){
     case ST_ARM:
 
-        idbg ^= prescale==0? 0x1: 0x0; outb( idbg, PP_DATA );
+        idbg ^= prescale==0? 0x1: 0x0; PP_OUT( idbg );
 
         if ( GATE_ON ){
             dp->state = ST_RUN;    // fall thru
@@ -671,7 +679,7 @@ void sim_GatedTransientTimerTask( void* args )
 
     case ST_RUN:
 
-        idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+        idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 
         if ( GATE_ON && 
              dp->nsamples_actual.post < dp->nsamples_requested.post ){
@@ -709,7 +717,7 @@ void sim_GatedContinuousTimerTask( void* args )
     switch( dp->state ){
     case ST_ARM:
 
-        idbg ^= prescale==0? 0x1: 0x0; outb( idbg, PP_DATA );
+        idbg ^= prescale==0? 0x1: 0x0; PP_OUT( idbg );
 
         if ( GATE_ON ){
             dp->state = ST_RUN;    // and fall thru
@@ -736,7 +744,7 @@ void sim_GatedContinuousTimerTask( void* args )
             if ( dp->nsamples_actual.pre < MAX_PRESAMPLES && is_clocking() ){
 
 	        if ( prescale&0x10 ){
-                    idbg ^= 0x0f; outb( idbg, PP_DATA );
+                    idbg ^= 0x0f; PP_OUT( idbg );
                 }
 	        dp->nsamples_actual.pre += SAMPLES_PER_TICK(dp->clock.internal);
 	    }
@@ -751,7 +759,7 @@ void sim_GatedContinuousTimerTask( void* args )
 	    if ( is_clocking() ){
                 dp->nsamples_actual.post += SAMPLES_PER_TICK(dp->clock.internal);
 
-                idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+                idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 	    }
             break;                            // repeat
         }
