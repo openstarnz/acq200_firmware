@@ -25,10 +25,10 @@ mkdir -p "$out"
 spec() {
     case "$1" in
     el6)         echo "linux/amd64|Dockerfile.el6|" ;;
-    deb12-amd64) echo "linux/amd64|Dockerfile.deb|BASE=debian:12 HEADERS=linux-headers-amd64" ;;
-    deb12-i386)  echo "linux/386|Dockerfile.deb|BASE=debian:12 HEADERS=linux-headers-686" ;;
-    deb13-amd64) echo "linux/amd64|Dockerfile.deb|BASE=debian:trixie HEADERS=linux-headers-amd64" ;;
-    pve614)      echo "linux/amd64|Dockerfile.deb|BASE=debian:trixie PVE=trixie HEADERS=proxmox-headers-6.14" ;;
+    deb12-amd64) echo "linux/amd64|Dockerfile.debian|BASE=debian:12 HEADERS=linux-headers-amd64" ;;
+    deb12-i386)  echo "linux/386|Dockerfile.debian|BASE=debian:12 HEADERS=linux-headers-686" ;;
+    deb13-amd64) echo "linux/amd64|Dockerfile.debian|BASE=debian:trixie HEADERS=linux-headers-amd64" ;;
+    pve614)      echo "linux/amd64|Dockerfile.debian|BASE=debian:trixie PVE=trixie HEADERS=proxmox-headers-6.14" ;;
     *) return 1 ;;
     esac
 }
