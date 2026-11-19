@@ -85,7 +85,11 @@ int acq200_bb_alloc( struct IoMapping *mapping, long length, char name[] )
 
 int acq200_bb_free(struct IoMapping* map)
 {
-	iounmap((void*)map->pa);
+	/* bigbuf is only mapped when acq32_big_buf_base is set; modern iounmap()
+	 * warns when handed NULL */
+	if (map->pa){
+		iounmap((void*)map->pa);
+	}
 	return 0;
 }
 
