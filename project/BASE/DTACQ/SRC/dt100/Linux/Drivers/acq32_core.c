@@ -2937,7 +2937,7 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
 {
     int ibuf = 0;
     u32 mfa;
-    struct timeval tv_prev;
+    struct acq32_timeval tv_prev;
         
     PDEBUGL(3)(  " STARTS\n" );
 

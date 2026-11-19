@@ -724,7 +724,7 @@ int acq32_get_board_from_device( struct Acq32Device* device )
  * Timestamping
  */
  
-static void normalize( struct timeval* tv )
+static void normalize( struct acq32_timeval* tv )
 {
     while ( tv->tv_usec > 1000000 ){
         tv->tv_usec -= 1000000;
@@ -733,11 +733,11 @@ static void normalize( struct timeval* tv )
 }
 int acq32_timestamp( struct Acq32Device* device, int id, const char* fmt, ... )
 {
-    struct timeval tv;
+    struct acq32_timeval tv;
     va_list ap;
     va_start( ap, fmt );
 
-    do_gettimeofday( &tv );
+    acq32_gettimeofday( &tv );
 
     if ( device->instrument_buf.cur-device->instrument_buf.buf < 
          acq32_instrument_buf_len ){
@@ -757,20 +757,20 @@ int acq32_timestamp( struct Acq32Device* device, int id, const char* fmt, ... )
 }
 
 unsigned acq32_getDeltaTime( 
-    struct timeval* tv_prev, 
-    struct timeval* tv_update 
-    ) 
+    struct acq32_timeval* tv_prev,
+    struct acq32_timeval* tv_update
+    )
 {
-    struct timeval tv_now;
+    struct acq32_timeval tv_now;
     unsigned delta_t;
 
-    do_gettimeofday( &tv_now );
+    acq32_gettimeofday( &tv_now );
 
     delta_t =  (tv_now.tv_sec - tv_prev->tv_sec)*1000000 +
         tv_now.tv_usec - tv_prev->tv_usec;
 
     if ( tv_update ){
-        memcpy( tv_update, &tv_now, sizeof(struct timeval) );
+        memcpy( tv_update, &tv_now, sizeof(struct acq32_timeval) );
     }
     return delta_t;
 }
@@ -1238,9 +1238,10 @@ int acq32_globs_read_proc(
  */
 
 static void delta_tv( 
-    struct timeval* diff, struct timeval* old, struct timeval* cur )
+    struct acq32_timeval* diff, struct acq32_timeval* old,
+    struct acq32_timeval* cur )
 {
-    struct timeval tnew;
+    struct acq32_timeval tnew;
 
     tnew = *cur;
 
@@ -1278,8 +1279,8 @@ int acq32_inst_read_proc(
    
         for ( iboard = 0; iboard != S_acq32.ndevs; ++iboard ){
 
-            struct timeval prev = {};
-            struct timeval cur;
+            struct acq32_timeval prev = {};
+            struct acq32_timeval cur;
             InstrumentBuf* ib;
             struct Acq32Device* device = acq32_get_device_from_board( iboard );
 

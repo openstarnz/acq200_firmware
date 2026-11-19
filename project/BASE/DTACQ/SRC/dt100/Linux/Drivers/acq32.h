@@ -422,7 +422,7 @@
 #ifndef _ACQ32_H_
 #define _ACQ32_H_
 
-
+#include "compat.h"
 
 
 /*
@@ -614,7 +614,7 @@ struct Acq32MasterDriver;
 typedef struct INSTRUMENT_BUF {
     int id;
     char ids[100];
-    struct timeval tv;
+    struct acq32_timeval tv;
 } 
 InstrumentBuf;
 
@@ -852,7 +852,7 @@ struct Acq32Device {
 	    struct ReturnCommandHandler __first_handler;
 	struct ReturnCommandHandler* first_rch;
 	
-	struct timeval tv_last_streaming_message;
+	struct acq32_timeval tv_last_streaming_message;
 
 	unsigned streaming_message_delta_usecs;
 
@@ -1243,7 +1243,7 @@ acq32_timestamp( struct Acq32Device* dev, int id, const char* fmt, ... );
         acq32_timestamp( dev, typ, str, ##args ); break; }
 
 extern unsigned acq32_getDeltaTime( 
-    struct timeval* tv_prev, struct timeval* tv_update );
+    struct acq32_timeval* tv_prev, struct acq32_timeval* tv_update );
 
 
 static inline int printfn( int n, const char *fn )
