@@ -88,10 +88,10 @@ static int acq32_makeIoMapping(
 
     /* The whole device's BARs are already claimed via pci_request_regions()
      * in acq32_pci_probe(); just map this one. */
-    pim->va = ioremap_nocache( pim->pa, pim->len );
+    pim->va = ioremap( pim->pa, pim->len );
     if ( !pim->va ){
         dev_err(&device->p_pci->dev,
-                "ioremap_nocache 0x%08lx %d %s failed\n",
+                "ioremap 0x%08lx %d %s failed\n",
                 pim->pa, pim->len, pim->name);
         rc = -ENOMEM;
     }
@@ -331,9 +331,9 @@ static int acq32_map_target_pci( struct Acq32Device* device )
         device->rom.pa  = rom_pa & PCI_BASE_ADDRESS_MEM_MASK;
         device->rom.len = rom_len;
         dev_info(&device->p_pci->dev,
-                 "ROM ioremap: about to ioremap_nocache(0x%08lx, %d)\n",
+                 "ROM ioremap: about to ioremap(0x%08lx, %d)\n",
                  device->rom.pa, device->rom.len);
-        device->rom.va  = ioremap_nocache(device->rom.pa, device->rom.len);
+        device->rom.va  = ioremap(device->rom.pa, device->rom.len);
         if ( !device->rom.va ){
             dev_err(&device->p_pci->dev,
                     "ROM ioremap 0x%08lx %d FAILED — ROM reads disabled\n",

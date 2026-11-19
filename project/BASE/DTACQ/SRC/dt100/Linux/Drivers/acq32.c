@@ -2266,9 +2266,9 @@ acq32_create_device(struct pci_dev* p_dev )
 	init_waitqueue_head( &device->m_dpd.waitq );
 	init_waitqueue_head( &device->m_dpd.aux_waitq );
  
-	init_MUTEX( &device->m_dpd.mbox_mutex );
-	init_MUTEX( &device->m_dpd.irq_req_mutex );
-	init_MUTEX( &device->m_dpd.ioread_fetch_mutex );
+	sema_init( &device->m_dpd.mbox_mutex, 1 );
+	sema_init( &device->m_dpd.irq_req_mutex, 1 );
+	sema_init( &device->m_dpd.ioread_fetch_mutex, 1 );
  
 	appbufInit( &device->appbuf );
 	streamBufInit( &device->streambuf );
@@ -2386,10 +2386,7 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
      * to the device DMA-ing to truncated addresses and the driver
      * then phys_to_virt()-ing the resulting MFA into random kernel
      * memory.  Pin both the streaming and consistent masks at 32. */
-    rc = pci_set_dma_mask( p_dev, DMA_BIT_MASK(32) );
-    if ( !rc ){
-        rc = pci_set_consistent_dma_mask( p_dev, DMA_BIT_MASK(32) );
-    }
+    rc = acq32_dma_set_mask_and_coherent( &p_dev->dev, DMA_BIT_MASK(32) );
     if ( rc ){
         dev_warn(&p_dev->dev,
                  "32-bit DMA mask not available (%d) — DMA may corrupt\n",
@@ -2483,7 +2480,7 @@ int init_module(void)
 
 	PDEBUGL(3)( "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
 
-	init_MUTEX( &S_acq32.ioread_fetch_mutex );
+	sema_init( &S_acq32.ioread_fetch_mutex, 1 );
 #ifdef ACQ200
 	/* 
          * this assigns acq200 devices

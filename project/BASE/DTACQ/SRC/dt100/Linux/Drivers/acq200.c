@@ -481,8 +481,8 @@ ssize_t acq200_bridge_read_generic (
 {
 	struct Acq32Device *device = DG(file)->acq32_device;
 	struct ReturnCommandHandler* rch;
-	struct IoMapping *kbuf = 
-		acq200_bb_pool_alloc(device, &rch, PCI_DMA_TODEVICE);
+	struct IoMapping *kbuf =
+		acq200_bb_pool_alloc(device, &rch, DMA_TO_DEVICE);
 	Message *message;
 
 	if (kbuf == 0){
@@ -599,7 +599,7 @@ int acq200_fetchDataToLocalBuffer(
 		struct ReturnCommandHandler* rch;
 		struct IoMapping *kbuf = 
 			acq200_bb_pool_alloc(path->device, &rch, 
-					     PCI_DMA_FROMDEVICE);
+					     DMA_FROM_DEVICE);
 		int ns = min(nsamples-ntotal, SAMPLES_PER_BUFFER(channel));
 		Message *message;
 		int rc;
@@ -674,7 +674,7 @@ ssize_t acq200_bridge_write_generic (
 	struct Acq32Device *device = DG(file)->acq32_device;
 	struct ReturnCommandHandler *rch;
 	struct IoMapping *kbuf = 
-		acq200_bb_pool_alloc(device, &rch, PCI_DMA_TODEVICE);
+		acq200_bb_pool_alloc(device, &rch, DMA_TO_DEVICE);
 	Message *message;
 
 	if (kbuf == 0) return -ETIMEDOUT;
@@ -987,7 +987,7 @@ static int acq32_makeIoMapping(
 		pim->pa, pim->len, pim->name );
 
 	if ( request_mem_region( pim->pa, pim->len, pim->name ) != 0 ){
-		pim->va = ioremap_nocache( pim->pa, pim->len );
+		pim->va = ioremap( pim->pa, pim->len );
 	}else{
 		dbg( 1, "request_mem_region( 0x%08lx, %d, %s ) failed\n",
 			    pim->pa, pim->len, pim->name );
