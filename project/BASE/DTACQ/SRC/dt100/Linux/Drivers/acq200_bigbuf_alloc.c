@@ -86,9 +86,11 @@ int acq200_bb_alloc( struct IoMapping *mapping, long length, char name[] )
 int acq200_bb_free(struct IoMapping* map)
 {
 	/* bigbuf is only mapped when acq32_big_buf_base is set; modern iounmap()
-	 * warns when handed NULL */
-	if (map->pa){
-		iounmap((void*)map->pa);
+	 * warns when handed NULL.  The ioremap() cookie is va, not the
+	 * physical address. */
+	if (map->va){
+		iounmap((void*)map->va);
+		map->va = NULL;
 	}
 	return 0;
 }
