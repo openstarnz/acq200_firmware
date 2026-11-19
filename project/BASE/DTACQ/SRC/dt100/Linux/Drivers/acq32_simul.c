@@ -903,8 +903,8 @@ static int sim_SetAbort( struct Acq32Path* path )
 
 static int sim_GetNumSamples( struct Acq32Path* path )
 {
-    return path->device->m_dpd.nsamples_actual.pre + 
-	path->device->m_dpd.nsamples_actual.pre;
+    return path->device->m_dpd.nsamples_actual.pre +
+	path->device->m_dpd.nsamples_actual.post;
 }
 
 static int sim_SetChannel(
