@@ -1005,6 +1005,102 @@ static int sim_GetInfo( struct Acq32Path* path, enum StatusSelect selector )
     return 0;
 }
 /*
+ * Every method of the master driver table has a simulator implementation,
+ * so no command on a simulated board falls through to the hardware method
+ * of the same name, which would reach the board's mailbox registers.
+ * Methods with nothing to simulate succeed and do nothing.
+ */
+
+static int sim_GetNumChannels( struct Acq32Path* path )
+{
+    SlaveIterState sis = {};
+    struct Acq32Device* device;
+    int nchannels = 0;
+
+    while ( (device = acq32_getNextSlave( path, &sis )) != NULL ){
+        nchannels += hweight32( device->m_dpd.channel_mask );
+    }
+    return nchannels;
+}
+
+static int sim_GetMemoryDepth( struct Acq32Path* path, int channel )
+// samples per channel for the 0-based channel of the path's boards, 0 if
+// the channel is not enabled, -1 if there is no such channel
+{
+    SlaveIterState sis = {};
+    struct Acq32Device* device;
+    int ichan = 0;
+
+    while ( (device = acq32_getNextSlave( path, &sis )) != NULL ){
+        struct DriverPrivate* dp = &device->m_dpd;
+        int nenabled = hweight32( dp->channel_mask );
+
+        if ( channel >= ichan && channel < ichan + dp->nchannels ){
+            if ( nenabled == 0 ||
+                 (dp->channel_mask&(1<<(channel-ichan))) == 0 ){
+                return 0;
+            }else{
+                return dp->total_sample_length/nenabled;
+            }
+        }
+        ichan += dp->nchannels;
+    }
+    return -1;
+}
+
+static int sim_SetStreaming( struct Acq32Path* path, int npairs, int burst )
+{
+    return 0;
+}
+static int sim_SetSyncRoute( struct Acq32Path* path, int func, unsigned mask )
+{
+    return 0;
+}
+static int sim_SetInt( struct Acq32Path* path, int arg )
+// SetDistributor, SetRoute, SetCal, waitState, ReserveAO
+{
+    return 0;
+}
+static int sim_SetPhase(
+    struct Acq32Path* path, enum FX fx, enum SUBJECT ph, int nsamples )
+{
+    return 0;
+}
+static int sim_GetPhase(
+    struct Acq32Path* path,
+    enum FX fx, enum SUBJECT ph, enum PHASE_PROPERTY property )
+{
+    return 0;
+}
+static int sim_SetEvent(
+    struct Acq32Path* path,
+    enum FX fx, enum SUBJECT event, struct EventConditionDef* ecd )
+{
+    return 0;
+}
+static int sim_GetEvent(
+    struct Acq32Path* path, enum FX fx, enum SUBJECT event )
+// and FireEvent
+{
+    return 0;
+}
+static int sim_SetClock( struct Acq32Path* path, enum FX fx, int clk_source )
+{
+    return 0;
+}
+static int sim_SetUser(
+    struct Acq32Path* path, int user_led, enum USERLED mode )
+{
+    return 0;
+}
+static int sim_SetThreshold(
+    struct Acq32Path* path,
+    enum ThresholdSelect channel, short trigger_above, short trigger_below )
+{
+    return 0;
+}
+
+/*
  * instantiate the master driver object
  */
 
@@ -1014,24 +1110,42 @@ struct Acq32MasterDriver* acq32_getSimul(void)
 
 	sim_GetState,         // GetState
 	sim_SetChannelMaskAll,// SetChannelMask
-	NULL,                 // GetMemoryDepth
+	sim_GetMemoryDepth,   // GetMemoryDepth
 	sim_SetMode,          // SetMode
 	sim_SetArmed,         // SetArmed
 	sim_SetAbort,         // SetAbort
 	sim_GetNumSamples,    // GetNumSamples
-	NULL,                 // GetNumChannels
-	NULL,                 // OnOpen
-	NULL,                 // OnRelease
+	sim_GetNumChannels,   // GetNumChannels
+	sim_null,             // OnOpen
+	sim_null,             // OnRelease
 	sim_null,             // SetInternalClock
 	sim_null,             // SetExternalClock
-	sim_null,             // GetInternalClock
+	sim_null,             // SetSampleTagging
 	sim_null,             // SetDIO
-	sim_null,             // getDIO
-	sim_SetChannel,       // SetChannel 
+	sim_null,             // GetDIO
+	sim_SetChannel,       // SetChannel
+	sim_SetStreaming,     // SetStreaming
 
 	GetRange:	sim_GetRange,
 	GetAvailableChannels:	sim_GetAvailableChannels,
-	GetInfo: sim_GetInfo
+	GetInfo: sim_GetInfo,
+	DoBigdump:      sim_null,
+	SetDistributor: sim_SetInt,
+	SetRoute:       sim_SetInt,
+	SetSyncRoute:   sim_SetSyncRoute,
+	SetCal:         sim_SetInt,
+	waitState:      sim_SetInt,
+	SetPhase:       sim_SetPhase,
+	GetPhase:       sim_GetPhase,
+	SetEvent:       sim_SetEvent,
+	GetEvent:       sim_GetEvent,
+	FireEvent:      sim_GetEvent,
+	SetClock:       sim_SetClock,
+	ClockNow:       sim_null,
+	ResetGut:       sim_null,
+	ReserveAO:      sim_SetInt,
+	SetUser:        sim_SetUser,
+	SetThreshold:   sim_SetThreshold
     };
 #define NMETHODS (sizeof(struct Acq32MasterDriver)/(sizeof (void*)))    
 
