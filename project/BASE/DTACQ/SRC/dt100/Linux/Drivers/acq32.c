@@ -651,12 +651,19 @@ static int allocateDmaBuffer( struct Acq32Device* device )
     return 0;
 }
 
-/* the mapping must go before pci_disable_device(), the pages after */
+/*
+ * The card must have stopped mastering the bus before the mapping goes, the
+ * pages are freed after that.  Once unmapped the bus address is dead: clear
+ * it and the length so it is never sent to the card again and no MFA can
+ * match the buffer (mfa_is_outbound_frame() tests against len).
+ */
 static void unmapDmaBuffer( struct Acq32Device* device )
 {
     if ( device->dmabuf.mapped ){
         acq32_dma_unmap( device, device->dmabuf.pa, device->dmabuf.len );
         device->dmabuf.mapped = 0;
+        device->dmabuf.pa = 0;
+        device->dmabuf.len = 0;
     }
 }
 
@@ -664,7 +671,7 @@ static void freeDmaBuffer( struct Acq32Device* device )
 {
     unmapDmaBuffer( device );
 
-    if ( device->dmabuf.len && device->dmabuf.va ){
+    if ( device->dmabuf.va ){
         free_pages( (unsigned long)device->dmabuf.va, PAGE_ORDER );
         device->dmabuf.va = NULL;
         device->dmabuf.len = 0;
@@ -2481,8 +2488,10 @@ static void acq32_pci_remove( struct pci_dev* p_dev )
      * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
      * pci_release_regions() and pci_disable_device() pair the
      * matching calls in probe; the device struct itself is freed in
-     * cleanup_module.  The host buffer mapping is undone here, while
-     * the device is still enabled; its pages are freed in cleanup_module. */
+     * cleanup_module.  The card is stopped mastering the bus first, then
+     * the host buffer mapping is undone; its pages are freed in
+     * cleanup_module. */
+    pci_clear_master( p_dev );
     if ( device ){
         unmapDmaBuffer( device );
     }
