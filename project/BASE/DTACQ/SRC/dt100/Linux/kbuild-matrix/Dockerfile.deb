@@ -1,0 +1,25 @@
+# Debian-family build image: one compiler plus one kernel-headers package.
+#   BASE     base image (debian:12, debian:trixie)
+#   HEADERS  headers package to install
+#   PVE      Proxmox suite (e.g. trixie); when set, the pve-no-subscription
+#            repo is added so HEADERS can come from it
+ARG BASE=debian:12
+FROM ${BASE}
+ARG HEADERS=linux-headers-amd64
+ARG PVE=
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl gcc make bc kmod && \
+    if [ -n "$PVE" ]; then \
+      curl -fsSL -o /usr/share/keyrings/proxmox-archive-keyring.gpg \
+        "https://enterprise.proxmox.com/debian/proxmox-archive-keyring-${PVE}.gpg" && \
+      echo "deb [signed-by=/usr/share/keyrings/proxmox-archive-keyring.gpg] http://download.proxmox.com/debian/pve ${PVE} pve-no-subscription" \
+        > /etc/apt/sources.list.d/pve.list && \
+      apt-get update; \
+    fi && \
+    apt-get install -y --no-install-recommends ${HEADERS} && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY build.sh /build.sh
+ENTRYPOINT ["/bin/sh", "/build.sh"]
