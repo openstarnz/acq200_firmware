@@ -205,6 +205,14 @@ static int name( struct vm_fault* vmf ) \
 { \
 	return impl( vmf->vma, vmf->address ); \
 }
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+/* 4.10 renamed vm_fault.virtual_address to address; the handler still
+ * takes (vma, vmf) until 4.11 */
+#define ACQ32_DEFINE_VMA_FAULT( name, impl ) \
+static int name( struct vm_area_struct* vma, struct vm_fault* vmf ) \
+{ \
+	return impl( vma, vmf->address ); \
+}
 #else
 #define ACQ32_DEFINE_VMA_FAULT( name, impl ) \
 static int name( struct vm_area_struct* vma, struct vm_fault* vmf ) \
