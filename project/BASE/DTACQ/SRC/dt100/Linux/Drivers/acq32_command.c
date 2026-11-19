@@ -312,7 +312,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 

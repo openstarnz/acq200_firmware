@@ -505,7 +505,6 @@
 #include <linux/ioport.h>
 #include <linux/timer.h>
 #include <linux/wait.h>
-#include <linux/isdnif.h>
 #include <linux/tty.h>
 #include <linux/serial_reg.h>
 /* end kitchen sink */
@@ -524,7 +523,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
