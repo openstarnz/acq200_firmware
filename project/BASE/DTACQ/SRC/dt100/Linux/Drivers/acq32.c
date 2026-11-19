@@ -605,42 +605,65 @@ extern void acq32_globalIoreadFetchMutexUp(void)
 
 #ifndef ACQ200
 
-static void allocateDmaBuffer( struct Acq32Device* device )
+static int allocateDmaBuffer( struct Acq32Device* device )
 {
+    u32* va;
+    u32 pa;
+    int rc;
+
     /* GFP_DMA32 keeps the allocation below the 4 GiB line so the 32-bit
-     * DMA engine on the DEC 21285 can actually reach it.  Without this,
-     * the device DMA-truncates the address and we phys_to_virt() back
-     * to garbage — manifests as later slab corruption. */
+     * DMA engine on the DEC 21285 can actually reach it.  The pages are
+     * ours (they are mmapped to userspace), so the card's address for
+     * them comes from mapping them with the DMA API. */
     PDEBUGL(4)(  " calling __get_free_pages( GFP_KERNEL|GFP_DMA32, %d )\n",
                  PAGE_ORDER);
 
-    device->dmabuf.va =
-        (u32*)__get_free_pages( GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
+    va = (u32*)__get_free_pages( GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
 
     PDEBUGL(4)(  " back\n" );
-    
-    ASSERT( device->dmabuf.va );
 
-    device->dmabuf.len = DMABUF_SIZE;
-
-    PDEBUGL(2)( "dmabuf vaddr %p\n", device->dmabuf.va );
-    device->dmabuf.pa = virt_to_phys( device->dmabuf.va );
-    PDEBUGL(2)( "dmabuf paddr 0x%08x\n", device->dmabuf.pa);
+    if ( !va ){
+        return -ENOMEM;
+    }
 
     {
         int ii;
 
         for ( ii = 0; ii != DMABUF_SIZE/4; ++ii ){
-            device->dmabuf.va[ii] = 0xdeadbeef;
+            va[ii] = 0xdeadbeef;
         }
+    }
+
+    /* map after the CPU has filled it: the card owns the pages from here */
+    rc = acq32_dma_map( device, va, DMABUF_SIZE, &pa );
+    if ( rc ){
+        free_pages( (unsigned long)va, PAGE_ORDER );
+        return rc;
+    }
+
+    device->dmabuf.va = va;
+    device->dmabuf.pa = pa;
+    device->dmabuf.len = DMABUF_SIZE;
+    device->dmabuf.mapped = 1;
+
+    PDEBUGL(2)( "dmabuf vaddr %p\n", device->dmabuf.va );
+    PDEBUGL(2)( "dmabuf bus addr 0x%08x\n", device->dmabuf.pa);
+    return 0;
+}
+
+/* the mapping must go before pci_disable_device(), the pages after */
+static void unmapDmaBuffer( struct Acq32Device* device )
+{
+    if ( device->dmabuf.mapped ){
+        acq32_dma_unmap( device, device->dmabuf.pa, device->dmabuf.len );
+        device->dmabuf.mapped = 0;
     }
 }
 
 static void freeDmaBuffer( struct Acq32Device* device )
 {
-    /* Pre-existing bug: this used to pass dmabuf.len (a size) as the
-     * address to free_pages(), which panics on rmmod once free_pages
-     * actually walks the page tables.  Pass the virtual address. */
+    unmapDmaBuffer( device );
+
     if ( device->dmabuf.len && device->dmabuf.va ){
         free_pages( (unsigned long)device->dmabuf.va, PAGE_ORDER );
         device->dmabuf.va = NULL;
@@ -1988,7 +2011,9 @@ int _acq200_mmap_host( struct file* filp, struct vm_area_struct* vma )
 	unsigned long off       = 0;
 	unsigned long vsize     = vma->vm_end - vma->vm_start;
 
-	unsigned long physical = dev->dmabuf.pa;
+	/* userspace is mapped by CPU physical address; dmabuf.pa is the
+	 * card's view of the same bigbuf RAM */
+	unsigned long physical = dev->bigbuf.bb.pa;
 
 	PDEBUGL(2)( "acq32_mmap(): start off:%ld physical:0x%08lx vsize:0x%lx",
 		    off, physical, vsize );
@@ -2353,6 +2378,21 @@ static void coreDevInit( struct Acq32Device *device )
  * pci_find_device() polling loop.
  */
 
+/* Undo acq32_create_device() for the device it just made, when setting
+ * the rest of it up fails.  Only the newest device can be dropped. */
+static void acq32_discard_device( struct Acq32Device* device )
+{
+    ASSERT( S_acq32.devices[S_acq32.idev-1] == device );
+
+    unregister_chrdev( device->major, getDevName(device) );
+    acq32_device_readbuffer_delete( device );
+    if ( device->instrument_buf.buf ){
+        KFREE( device->instrument_buf.buf );
+    }
+    S_acq32.devices[--S_acq32.idev] = NULL;
+    KFREE( device );
+}
+
 static int acq32_pci_probe( struct pci_dev* p_dev,
                             const struct pci_device_id* id )
 {
@@ -2387,9 +2427,8 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
     /* The DEC 21285 / ACQ32 hardware is a 32-bit DMA master.  Without
      * an explicit mask the kernel may hand us coherent buffers above
      * the 4 GiB line, which the device silently can't reach — leading
-     * to the device DMA-ing to truncated addresses and the driver
-     * then phys_to_virt()-ing the resulting MFA into random kernel
-     * memory.  Pin both the streaming and consistent masks at 32. */
+     * to the device DMA-ing to truncated addresses.  Pin both the
+     * streaming and consistent masks at 32, before anything is mapped. */
     rc = acq32_dma_set_mask_and_coherent( &p_dev->dev, DMA_BIT_MASK(32) );
     if ( rc ){
         dev_warn(&p_dev->dev,
@@ -2405,7 +2444,13 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
         return -ENOMEM;
     }
 
-    allocateDmaBuffer( device );
+    rc = allocateDmaBuffer( device );
+    if ( rc ){
+        acq32_discard_device( device );
+        pci_release_regions( p_dev );
+        pci_disable_device( p_dev );
+        return rc;
+    }
     acq32_device_init( device );
 
     pci_set_drvdata( p_dev, device );
@@ -2414,11 +2459,17 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
 
 static void acq32_pci_remove( struct pci_dev* p_dev )
 {
+    struct Acq32Device* device = pci_get_drvdata( p_dev );
+
     /* Per-device teardown is performed in cleanup_module() by walking
      * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
      * pci_release_regions() and pci_disable_device() pair the
      * matching calls in probe; the device struct itself is freed in
-     * cleanup_module. */
+     * cleanup_module.  The host buffer mapping is undone here, while
+     * the device is still enabled; its pages are freed in cleanup_module. */
+    if ( device ){
+        unmapDmaBuffer( device );
+    }
     pci_release_regions( p_dev );
     pci_disable_device( p_dev );
 }
@@ -2456,7 +2507,11 @@ static int acq32_init_module(void)
             if ( !device ){
                 return -ENOMEM;
             }
-            allocateDmaBuffer( device );
+            if ( allocateDmaBuffer( device ) ){
+                acq32_discard_device( device );
+                KFREE( p_dev );
+                return -ENOMEM;
+            }
             acq32_device_init( device );
         }
         S_acq32.ndevs = 4;

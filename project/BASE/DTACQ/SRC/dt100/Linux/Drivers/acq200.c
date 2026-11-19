@@ -112,7 +112,7 @@ static Message *build_hrd_message(
 	}
 	message->header.length = 2*HRDR_SZ;
 
-	message->payload.hrdr[0].pci = pa;
+	message->payload.hrdr[0].pci = acq200_bigbuf_bus_addr( pa );
 	message->payload.hrdr[0].start = start;
 	message->payload.hrdr[0].nsamples = length;
 	message->payload.hrdr[0].stride = stride;
@@ -1039,7 +1039,7 @@ static int acq200_coreDevInit(struct Acq32Device *device)
  * acq200 MUST use bigbuf as the dma target 
  */
 	device->dmabuf.va = device->bigbuf.bb.va;	
-	device->dmabuf.pa = device->bigbuf.bb.pa;
+	device->dmabuf.pa = acq200_bigbuf_bus_addr( device->bigbuf.bb.pa );
 	device->dmabuf.len = device->bigbuf.bb.len;
 
 	return rc;

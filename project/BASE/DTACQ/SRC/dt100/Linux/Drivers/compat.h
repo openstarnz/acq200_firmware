@@ -160,20 +160,6 @@ static inline void acq32_interruptible_sleep_on( wait_queue_head_t* q )
 #endif
 
 /* ------------------------------------------------------------------------- */
-/* Bus addresses                                                             */
-/* ------------------------------------------------------------------------- */
-
-/*
- * virt_to_bus() is gone from x86.  PHASE 2 (DMA API): this assumes no IOMMU
- * translation and the x86 direct mapping, i.e. bus address == physical
- * address.  Remove it together with the callers when the buffers move to
- * dma_alloc_coherent().
- */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
-#define virt_to_bus( addr )	virt_to_phys( addr )
-#endif
-
-/* ------------------------------------------------------------------------- */
 /* DMA mask                                                                  */
 /* ------------------------------------------------------------------------- */
 

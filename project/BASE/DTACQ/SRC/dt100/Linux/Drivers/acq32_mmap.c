@@ -234,6 +234,7 @@ static void acq32_vma_release(struct vm_area_struct* vma )
             PDEBUG_MAPPING( 5, MAP_NR( cm->buffers[ibuf] ) );
             PDEBUG_MAPPING( 5, MAP_NR( cm->buffers[ibuf] )+1 );
 #endif
+            acq32_dma_unmap( device, cm->bus[ibuf], DMABUF_SIZE );
             FREE_PAGES((unsigned long)cm->buffers[ibuf], PAGE_ORDER);
         }
 
@@ -404,6 +405,13 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 
 	if ( cm->buffers[ibuf] == (void*)0 ){
 	    PDEBUG( "ERROR __get_free_pages() failed Should set ENOMEM\n" );
+	    rc = -ENOMEM;
+	    break;
+	}else if ( acq32_dma_map( path->device, cm->buffers[ibuf],
+				  DMABUF_SIZE, &cm->bus[ibuf] ) ){
+	    PDEBUG( "ERROR acq32_dma_map() failed\n" );
+	    FREE_PAGES( (unsigned long)cm->buffers[ibuf], PAGE_ORDER );
+	    cm->buffers[ibuf] = (void*)0;
 	    rc = -ENOMEM;
 	    break;
 	}else{

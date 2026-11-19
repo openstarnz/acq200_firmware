@@ -753,8 +753,9 @@ struct Acq32Device {
 
     struct DmaBuf {
 	    u32* va;
-	    u32 pa;
+	    u32 pa;                  /* bus address, as the card sees it */
 	    size_t len;
+	    int mapped;              /* pa holds a live DMA API mapping */
     }
     dmabuf;
 
@@ -978,6 +979,7 @@ typedef struct CHANNEL_MAPPING {
     struct vm_area_struct* vma;
     // device read buffer done
     char* buffers[MAX_BUFFERS_IN_CHANNEL];
+    u32 bus[MAX_BUFFERS_IN_CHANNEL];     // buffers[i] as the card sees it
 }
 ChannelMapping;	  
 /*
@@ -1556,6 +1558,26 @@ int acq200_bb_free(struct IoMapping* map);
 int acq32_genericCoreDevInit( struct Acq32Device* device );
 
 void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa );
+
+/*
+ * acq32_utils.c: bus addresses for the card.  The card is a 32 bit bus
+ * master, so every address it is given comes from the DMA API.  Simulated
+ * devices have no pci_dev: they get virt_to_phys() and nothing to undo.
+ */
+int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus );
+void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len );
+void acq32_dma_sync_for_cpu(
+	struct Acq32Device* device, u32 bus, size_t len );
+
+/*
+ * ACQ200 bigbuf is RAM hidden with mem=, outside the DMA API.  This turns
+ * its physical address into the card's address by assuming bus == physical,
+ * which only holds without an IOMMU.  Bigbuf paths cannot be IOMMU safe.
+ */
+static inline u32 acq200_bigbuf_bus_addr( unsigned long pa )
+{
+	return (u32)pa;
+}
 
 #define ACQ200_PCIWINSZ  0x01000000
 #define ACQ200_PCIWINMSK (ACQ200_PCIWINSZ-1)

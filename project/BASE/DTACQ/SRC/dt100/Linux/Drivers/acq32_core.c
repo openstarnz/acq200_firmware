@@ -2979,7 +2979,7 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
         if ( duff_mfa( device, mfa, "bh" ) ) continue;
 #endif
         { //XXXX (told you it was a hack!
-            Message* message = (Message*)phys_to_virt( mfa );
+            Message* message = (Message*)device->i2o_mfa2va( device, mfa );
 
             u16 id    = message->header.id;
             u16 mylen = message->header.length;
@@ -3347,7 +3347,15 @@ void fetchDataReturnHandler(
                             ireq, this_response->start );
                     
                 path->return_samples += this_response->nsamples;
-                         
+
+                /* The card has finished writing this buffer: make it
+                 * visible to the CPU before userspace reads it.  The
+                 * rest of the data path relies on the mapping not being
+                 * bounced (pages below 4 GiB, 32 bit mask), so there is
+                 * no matching sync back to the device. */
+                acq32_dma_sync_for_cpu(
+                    path->device, requests[ireq].pci, DMABUF_SIZE );
+
                 memset( &requests[ireq], 0, sizeof(HostRequestDataRecord) );
                 ++zeros;
                 not_accepted = 0;
@@ -3486,7 +3494,7 @@ static int _acq32_fetchDataToLocalBuffer(
             (end_of_message = ireq >= MESSAGE_HRDR_LEN       )     ); 
 	  ++ireq, ++ipbuf ){
               
-        requests[ireq].pci         = virt_to_bus( mapping->buffers[ipbuf] );
+        requests[ireq].pci         = mapping->bus[ipbuf];
         requests[ireq].start       = start;
         
         requests[ireq].nsamples    = MIN( nsamples-ntotal, 
@@ -3688,7 +3696,7 @@ extern int acq32_getBufferPhysicalAddr(
     for ( ireq = 0; 
           ireq != MAX_BUFFERS_IN_CHANNEL && mapping->buffers[ireq]; ++ireq ){
               
-        paddrs[ireq*2] = virt_to_bus( mapping->buffers[ireq] );
+        paddrs[ireq*2] = mapping->bus[ireq];
         paddrs[ireq*2+1] = DMABUF_SIZE;
             
         PDEBUGL(3)(  "[%d] bus:0x%08x len:0x%08x\n",

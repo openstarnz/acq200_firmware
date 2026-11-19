@@ -1005,8 +1005,21 @@ static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 
 static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 {
-	/* ACQ32 mfa's come with an id tag in top byte */
-	return (void*)phys_to_virt(mfa);
+	/*
+	 * An mfa is the bus address of one frame of the host message buffer.
+	 * Every mfa that gets here came through mfa_is_outbound_frame() in the
+	 * ISR, which compares all 32 bits, so there is no id tag in the top
+	 * byte to strip: a tagged mfa would have been dropped there.  Take
+	 * the offset into the buffer, never a bus address to pointer
+	 * conversion, as bus != physical behind an IOMMU.
+	 */
+	u32 offset = mfa - device->dmabuf.pa;
+
+	/* the card wrote this frame: make it visible to the CPU first */
+	acq32_dma_sync_for_cpu( device, mfa,
+				device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
+
+	return (char*)device->dmabuf.va + offset;
 }
 
 

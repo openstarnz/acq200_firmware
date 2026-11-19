@@ -69,6 +69,7 @@
 #include <linux/proc_fs.h>
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
+#include <linux/dma-mapping.h>
 #include <linux/sched.h>
 
 
@@ -409,4 +410,56 @@ int acq32_swallowKmem( unsigned orders )
     PDEBUG( "klaaring out\n" );
 
     return 0;
+}
+
+/*
+ * Bus addresses for the card.  Map pages we allocated ourselves for the
+ * life of the buffer, so the address handed to the card is whatever the
+ * platform (IOMMU or not) says it is, never a physical address assumed
+ * to be one.
+ */
+int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus )
+{
+    struct device* dev;
+    dma_addr_t addr;
+
+    if ( acq32_simulate ){
+        /* the pci_dev is a fake: there is no DMA API to ask */
+        *bus = (u32)virt_to_phys( va );
+        return 0;
+    }
+
+    dev = &device->p_pci->dev;
+    addr = dma_map_single( dev, va, len, DMA_BIDIRECTIONAL );
+    if ( dma_mapping_error( dev, addr ) ){
+        dev_err( dev, "dma_map_single failed for %zu bytes\n", len );
+        return -EIO;
+    }
+
+    /* The card holds 32 bit addresses; a truncated one would make it
+     * write somewhere else entirely. */
+    if ( (u64)addr + len - 1 > 0xffffffffULL ){
+        dev_err( dev, "DMA address 0x%llx+0x%zx is above 4 GiB\n",
+                 (unsigned long long)addr, len );
+        dma_unmap_single( dev, addr, len, DMA_BIDIRECTIONAL );
+        return -EIO;
+    }
+
+    *bus = (u32)addr;
+    return 0;
+}
+
+void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len )
+{
+    if ( !acq32_simulate ){
+        dma_unmap_single( &device->p_pci->dev, bus, len, DMA_BIDIRECTIONAL );
+    }
+}
+
+void acq32_dma_sync_for_cpu( struct Acq32Device* device, u32 bus, size_t len )
+{
+    if ( !acq32_simulate ){
+        dma_sync_single_for_cpu(
+            &device->p_pci->dev, bus, len, DMA_BIDIRECTIONAL );
+    }
 }
