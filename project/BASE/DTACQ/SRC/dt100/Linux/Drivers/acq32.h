@@ -759,7 +759,9 @@ struct Acq32Device {
     }
     dmabuf;
 
-    int vmas;                        // count of open vma's
+    int simulated;                   /* p_pci is a fake: no DMA API */
+
+    int vmas;                       // count of open vma's
 
     struct BigBuf {
 	    struct IoMapping bb;

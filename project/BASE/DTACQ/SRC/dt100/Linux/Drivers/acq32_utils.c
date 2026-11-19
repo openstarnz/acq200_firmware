@@ -423,7 +423,7 @@ int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus )
     struct device* dev;
     dma_addr_t addr;
 
-    if ( acq32_simulate ){
+    if ( device->simulated ){
         /* the pci_dev is a fake: there is no DMA API to ask */
         *bus = (u32)virt_to_phys( va );
         return 0;
@@ -451,14 +451,14 @@ int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus )
 
 void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len )
 {
-    if ( !acq32_simulate ){
+    if ( !device->simulated ){
         dma_unmap_single( &device->p_pci->dev, bus, len, DMA_BIDIRECTIONAL );
     }
 }
 
 void acq32_dma_sync_for_cpu( struct Acq32Device* device, u32 bus, size_t len )
 {
-    if ( !acq32_simulate ){
+    if ( !device->simulated ){
         dma_sync_single_for_cpu(
             &device->p_pci->dev, bus, len, DMA_BIDIRECTIONAL );
     }

@@ -2294,6 +2294,7 @@ acq32_create_device(struct pci_dev* p_dev )
 	device->p_pci = p_dev;
 	memcpy( &device->pci_stash, p_dev, sizeof(struct pci_dev));
  
+	device->simulated = acq32_simulate;
 	device->p_md = acq32_simulate?
 	    acq32_getSimul(): acq32_getDriver();
  
