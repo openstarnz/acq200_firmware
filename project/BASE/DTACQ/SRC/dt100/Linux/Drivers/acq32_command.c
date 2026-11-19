@@ -917,9 +917,6 @@ static int do_GetInfo(
     
     enum StatusSelect selector;
 
-    
-    if ( acq32_simulate ) return iarg;
-
     selector = lkupKey( argv[iarg], _lut, NLUT );
     
     if ( selector == - 1 ){
