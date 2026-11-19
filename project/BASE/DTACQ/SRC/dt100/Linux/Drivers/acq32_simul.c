@@ -148,6 +148,7 @@ WARNING: this functionality has rotted - don't expect it to work
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
 #include <linux/sched.h>        /* schedule() */
+#include <linux/delay.h>        /* msleep() */
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
@@ -342,8 +343,8 @@ ssize_t sim_streaming_rowdev_read (
     while ( f_pos >= (samples_now = dp->nsamples_actual.pre) ){
         int rv;
 
-        if ( !MOD_IN_USE ){
-	    PDEBUGL(1)( "oops - module not in use, bale out\n" );
+        if ( dp->state == ST_STOP ){
+	    PDEBUGL(1)( "board stopped, bale out\n" );
             return 0;
         }
 
@@ -625,6 +626,39 @@ static int is_clocking(void)
 
 static int idbg;              // output from pport
 
+/*
+ * Requeue the simulated clock for as long as the board is capturing, and
+ * finish when it is stopped. The timer tasks are work items, so they may
+ * sleep: waiting one tick keeps the simulated clock at HZ instead of
+ * spinning a CPU. (acq32_restart_timer_task() is shared with the hardware
+ * driver and tests MOD_IN_USE, which is 0 on 2.6+.)
+ */
+static void sim_restart_timer_task( struct DriverPrivate* dp )
+{
+    if ( dp->state == ST_STOP ){
+        acq32_finish_with_engines( dp );
+    }else{
+        msleep( 1000/HZ );
+        queue_task( &dp->work_task, &tq_timer );
+    }
+}
+
+/*
+ * Stop the simulated clock: wait out a tick in progress, keep it from
+ * requeueing, and leave the board stopped. Used on abort and on unload,
+ * where the work item must not outlive the module or the device.
+ * The work item is only initialised once the board has been armed.
+ */
+void acq32_sim_stop_clock( struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+
+    if ( dp->work_task.work.func ){
+        cancel_work_sync( &dp->work_task.work );
+    }
+    acq32_finish_with_engines( dp );
+}
+
 
 
 void sim_SoftTransientTimerTask( void* args )
@@ -649,7 +683,7 @@ void sim_SoftTransientTimerTask( void* args )
         if ( is_clocking() ){
 	    dp->nsamples_actual.post += SAMPLES_PER_TICK( dp->clock.internal);
         }
-        acq32_restart_timer_task( dp );
+        sim_restart_timer_task( dp );
     }else{
         acq32_finish_with_engines( dp );
         istatus = 0;
@@ -695,7 +729,7 @@ void sim_GatedTransientTimerTask( void* args )
         return;                   // finished
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 
 
@@ -770,7 +804,7 @@ void sim_GatedContinuousTimerTask( void* args )
         return; 
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 void sim_SoftContinuousTimerTask( void* args )
 {
@@ -804,10 +838,10 @@ void sim_SoftContinuousTimerTask( void* args )
         return; 
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 
-static int sim_SetChannelMaskAll( 
+static int sim_SetChannelMaskAll(
     struct Acq32Path* path, 
     char* smask,
     int boost
@@ -877,8 +911,10 @@ static int sim_SetArmed( struct Acq32Path* path )
                 dp->mode==M_GATED_CONTINUOUS? sim_GatedContinuousTimerTask:
 		sim_SoftTransientTimerTask;
             dp->work_task.data = path->device;
-#endif	    
+#endif
 
+            /* ARM before the tick can run, or it sees ST_STOP and finishes */
+            dp->state = ST_ARM;
             queue_task( &dp->work_task, &tq_timer );
         }else{
             int timed_out = 
@@ -887,8 +923,8 @@ static int sim_SetArmed( struct Acq32Path* path )
             if ( timed_out ){
 		PDEBUG( "ERROR:TIMED OUT - please report to DTACQ \n" );
 	    }
+            dp->state = ST_ARM;
 	}
-        dp->state = ST_ARM;
         break;
     default:
 	// do nothing
@@ -905,7 +941,7 @@ static int sim_SetAbort( struct Acq32Path* path )
         PDEBUG( "%d 0x%02x", ii, statuses[ii] );
     }
 #endif
-    path->device->m_dpd.state = ST_STOP;
+    acq32_sim_stop_clock( path->device );
     return 0;
 }
 

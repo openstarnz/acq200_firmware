@@ -2587,6 +2587,10 @@ static void acq32_driver_exit(void)
   
         struct Acq32Device* device = S_acq32.devices[ii];
 
+        if ( acq32_simulate ){
+            acq32_sim_stop_clock( device );
+        }
+
         unregister_chrdev( device->major, getDevName(device));
 
         acq200_bb_pool_delete(device);

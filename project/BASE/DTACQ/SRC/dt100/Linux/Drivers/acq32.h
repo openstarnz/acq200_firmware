@@ -1195,6 +1195,7 @@ extern struct Acq32MasterDriver* acq32_getSimul(void);
 
 void acq32_finish_with_engines( struct DriverPrivate* dp );
 void acq32_restart_timer_task( struct DriverPrivate* dp );
+void acq32_sim_stop_clock( struct Acq32Device* device );
 
 int acq32_getDeviceCount(void);
 
