@@ -656,6 +656,7 @@ int acq32_coreDevInit( struct Acq32Device* device )
 // ctype.h macro valid for ASCII only (I guess we can live with that)
 
 
+#undef isprint
 #define isprint( cc )  ( IN_RANGE( cc, ' ', '~' ) )
 
 

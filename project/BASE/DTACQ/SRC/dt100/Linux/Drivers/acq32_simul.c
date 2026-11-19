@@ -229,7 +229,7 @@ unsigned short acq32_generate_sample_tag(
 	the_tag |= xX << nX_bit;
     }
 
-    device->m_dpd.subframe_id = (++device->m_dpd.subframe_id)&SUBFRAME_MASK;
+    device->m_dpd.subframe_id = (device->m_dpd.subframe_id+1)&SUBFRAME_MASK;
     return the_tag;
 }
 

@@ -2525,7 +2525,8 @@ static int acq32_SetEvent(
     switch ( ecd->ec ){
     case EC_TRIGGER_RISING:
     case EC_TRIGGER_FALLING:
-        a3 = ecd->prams.trigger_bit;    // fall thru
+        a3 = ecd->prams.trigger_bit;
+        fallthrough;
     default:
         command += BP_SET_FUNCODE(BP_GUT_SETEVENT)+BP_SET_A1(ecd->ec);
         break;
@@ -2655,7 +2656,8 @@ static int acq32_SetThreshold(
         distsel = BP_FC_SET_DATA_FAST_TRIGGER_MULTI;
         break;
     case THS_ALL:
-        channel = 'X';            // fall thru
+        channel = 'X';
+        fallthrough;
     default:
         ta = trigger_above;
         tb = trigger_below;
