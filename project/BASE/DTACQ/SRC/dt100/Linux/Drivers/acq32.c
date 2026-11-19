@@ -1086,6 +1086,7 @@ int acq32_read_proc_bus(
 
 
 
+ACQ32_BUILD_STAMP_BEGIN
 int acq32_report_version( char *buf, int max_len )
 {
     int len = 0;
@@ -1103,6 +1104,7 @@ int acq32_report_version( char *buf, int max_len )
 
     return len;
 }
+ACQ32_BUILD_STAMP_END
 
 int acq32_debug_read_proc(
     char* buf, char** start, off_t offset,
@@ -2310,7 +2312,7 @@ void init_proc_entries(void)
 // register the /proc fs entries
 
 #define CPRE(name, entry ) \
-        create_proc_read_entry( name, 0, NULL, entry, 0)
+        acq32_create_proc_read_entry( name, entry )
 	CPRE(PROCFILENAME, acq32_read_proc);
 	CPRE(PROCFILENAME ".bus", acq32_read_proc_bus);
 	CPRE("." PROCFILENAME, acq32_debug_read_proc);
