@@ -2620,6 +2620,12 @@ static void acq32_driver_exit(void)
         unregister_chrdev( device->major, getDevName(device));
 
         acq200_bb_pool_delete(device);
+	/* acq200 aliases ram.va to the bigbuf mapping; acq200_bb_free()
+	 * unmaps it, so drop the alias or unmap_pci_memory() would iounmap
+	 * the same cookie a second time. */
+	if ( device->bigbuf.bb.va && device->ram.va == device->bigbuf.bb.va ){
+		device->ram.va = NULL;
+	}
 	acq200_bb_free(&device->bigbuf.bb);
         acq32_device_readbuffer_delete( device );
         
