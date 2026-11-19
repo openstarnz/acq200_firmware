@@ -349,7 +349,6 @@ ssize_t sim_streaming_rowdev_read (
             return 0;
         }
 
-        init_waitqueue_head( &dp->waitq );
 	rv = interruptible_sleep_on_timeout( &dp->waitq, 100 );
 
 	if ( rv == 0 ){
@@ -897,7 +896,6 @@ static int sim_SetArmed( struct Acq32Path* path )
             acq32_show_busy( TRUE );
             init_capture( path );
 #ifdef LINUX_NEW_PCI
-            init_waitqueue_head( &dp->waitq );
 	    INIT_TQUEUE( &dp->work_task, 
 			 dp->mode==M_SOFT_CONTINUOUS?  sim_SoftContinuousTimerTask:
 			 dp->mode==M_GATED_TRANSIENT?  sim_GatedTransientTimerTask:
