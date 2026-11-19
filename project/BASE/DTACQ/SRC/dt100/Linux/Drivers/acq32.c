@@ -2071,6 +2071,8 @@ static struct file_operations acq32_fops = {          // default ops
     .read    = acq32_read,
 
     .mmap    = acq32_mmap,    // acq32_mmap
+#else
+    .llseek  = default_llseek,
 #endif
     .unlocked_ioctl = acq32_unlocked_ioctl,
     .mmap    = acqXX_mmap_csr,
@@ -2081,11 +2083,13 @@ static struct file_operations acq32_fops = {          // default ops
 
 static struct file_operations acq32_AO_immediate_fops = {
     .owner = THIS_MODULE,
+    .llseek   = default_llseek,
     .write    = acq32_AO_immediate_write,
     .release  = acq32_release,
 };
 static struct file_operations acq32_AO_fungen_fops = {
     .owner = THIS_MODULE,
+    .llseek   = default_llseek,
     .write    = acq32_AO_function_write,
     .open     = acq32_AO_fungen_open,
     .release  = acq32_AO_fungen_release,
@@ -2093,12 +2097,14 @@ static struct file_operations acq32_AO_fungen_fops = {
 
 static struct file_operations acq32_DO_immediate_fops = {
     .owner = THIS_MODULE,
+    .llseek   = default_llseek,
     .write    = acq32_DO_immediate_write,
     .release  = acq32_release,
 };
 
 static struct file_operations acq32_DO_fungen_fops = {
     .owner = THIS_MODULE,
+    .llseek   = default_llseek,
     .write    = acq32_DO_function_write,
     .open     = acq32_DO_fungen_open,
     .release  = acq32_DO_fungen_release,
@@ -2107,12 +2113,14 @@ static struct file_operations acq32_DO_fungen_fops = {
 
 static struct file_operations acq32_test_fops = {
     .owner = THIS_MODULE,
+    .llseek   = default_llseek,
     .read     = acq32_test_read,
     .release  = acq32_release,
 };
 #ifndef ACQ200
 static struct file_operations acq32_rom_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
     .read    = acq32_rom_read,    // acq32_read
     .unlocked_ioctl = acq32_unlocked_ioctl,
     .mmap    = acq32_mmap_rom,    // acq32_mmap
@@ -2122,6 +2130,7 @@ static struct file_operations acq32_rom_fops = {
 #endif
 static struct file_operations acq32_dmabuf_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
 #ifndef ACQ200
     .read    = acq32_dmabuf_read,    // acq32_read
 #endif
@@ -2132,6 +2141,7 @@ static struct file_operations acq32_dmabuf_fops = {
 
 static struct file_operations acq32_hostbuf_fops = {
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,
 	.read = acq32_hostbuf_read,
 	.mmap    = acq32_mmap_host,    // acq32_mmap
 	.release = acq32_release,
@@ -2139,6 +2149,7 @@ static struct file_operations acq32_hostbuf_fops = {
 
 static struct file_operations acq32_master_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
     .read    = acq32_master_read,    // acq32_read
     .write   = acq32_master_write,   // acq32_write
     .unlocked_ioctl = acq32_unlocked_ioctl,
@@ -2148,6 +2159,7 @@ static struct file_operations acq32_master_fops = {
 
 static struct file_operations acq32_channel_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
     .read    = acq32_channel_read,    // acq32_read
     .write   = acq32_data_write,      // acq32_write
     .unlocked_ioctl = acq32_unlocked_ioctl,
@@ -2157,6 +2169,7 @@ static struct file_operations acq32_channel_fops = {
 
 static struct file_operations acq32_rowdev_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
     .read    = acq32_row_read,        // acq32_read
     .write   = acq32_data_write,      // acq32_write
     .unlocked_ioctl = acq32_unlocked_ioctl,
@@ -2166,6 +2179,7 @@ static struct file_operations acq32_rowdev_fops = {
 static struct file_operations acq32_status_fops = {
     .owner = THIS_MODULE,
     .open    = acq32_status_open,
+    .llseek  = default_llseek,
     .read    = acq32_status_read,
     .write   = acq32_status_write,
     .release = acq32_status_release,

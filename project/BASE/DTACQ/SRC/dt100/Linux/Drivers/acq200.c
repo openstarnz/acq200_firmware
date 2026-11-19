@@ -766,6 +766,7 @@ acq200_bridge_driver_init( struct DevGlob *dg )
 	static struct file_operations bridge_fops = {
 		.owner = THIS_MODULE,
 		.open = acq200_bridge_open,
+		.llseek = default_llseek,
 		.read = acq200_bridge_read,
 		.write = acq200_bridge_write,
 		.release = acq200_bridge_release,

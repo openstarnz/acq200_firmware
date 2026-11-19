@@ -88,6 +88,7 @@ wavegen_driver_init(struct DevGlob *dg)
 	static struct file_operations wave_out_fops = {
 		.owner = THIS_MODULE,
 		.open = wav232_open,
+		.llseek = default_llseek,
 		.release = wav232_release,
 		.read = wav232_read,
 		.write = wav232_write,
