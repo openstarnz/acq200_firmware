@@ -312,6 +312,7 @@ ssize_t sim_channel_read (
     }
 
     filp->f_pos = f_pos;
+    *posp = f_pos;
     return tcount;
 }
 
@@ -425,6 +426,7 @@ ssize_t sim_streaming_rowdev_read (
     }
 
     filp->f_pos = f_pos;
+    *posp = f_pos;
 
     PDEBUGL(3)( "streaming_rowdev_read() returning %zu\n", tcount );
 
@@ -538,6 +540,7 @@ ssize_t sim_rowdev_read (
     PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu end\n", f_pos, tcount );
 
     filp->f_pos = f_pos;
+    *posp = f_pos;
     return tcount;
 }
 

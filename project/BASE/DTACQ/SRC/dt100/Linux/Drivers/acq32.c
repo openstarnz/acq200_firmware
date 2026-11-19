@@ -2172,6 +2172,7 @@ static struct file_operations acq32_status_fops = {
 };
 static struct file_operations sim_channel_fops = {
     .owner = THIS_MODULE,
+    .llseek  = acq32_lseek,
     .read    = sim_channel_read,    // acq32_read
     .write   = acq32_data_write,    // acq32_write
     .unlocked_ioctl = acq32_unlocked_ioctl,
@@ -2181,6 +2182,7 @@ static struct file_operations sim_channel_fops = {
 
 static struct file_operations sim_rowdev_fops = {
     .owner = THIS_MODULE,
+    .llseek  = acq32_lseek,
     .read    = sim_rowdev_read,    // acq32_read
     .write   = acq32_data_write,    // acq32_write
     .unlocked_ioctl = acq32_unlocked_ioctl,
