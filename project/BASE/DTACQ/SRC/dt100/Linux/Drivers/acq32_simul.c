@@ -263,7 +263,7 @@ ssize_t sim_channel_read (
     size_t tcount = 0;
     int NSAMPLES = PDRVR(filp)->GetNumSamples( PD(filp) );
 
-    unsigned long f_pos = (unsigned long)filp->f_pos;
+    unsigned long f_pos = (unsigned long)*posp;
 
     if ( f_pos > NSAMPLES ){
         return 0;
@@ -311,7 +311,6 @@ ssize_t sim_channel_read (
         }
     }
 
-    filp->f_pos = f_pos;
     *posp = f_pos;
     return tcount;
 }
@@ -328,7 +327,7 @@ ssize_t sim_streaming_rowdev_read (
     unsigned mode = ACFI_MODE&CM_EXCLUSIVE_OPTS;
     unsigned tagging = mode==CM_BINARY && PDEV(filp)->m_dpd.sample_tagging;
 
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
     unsigned stride = dp->streaming&0xffff;
     size_t tcount = 0;
 
@@ -424,7 +423,6 @@ ssize_t sim_streaming_rowdev_read (
         }
     }
 
-    filp->f_pos = f_pos;
     *posp = f_pos;
 
     PDEBUGL(3)( "streaming_rowdev_read() returning %zu\n", tcount );
@@ -439,7 +437,7 @@ ssize_t sim_rowdev_read (
     size_t tcount = 0;
     int NSAMPLES = PDRVR(filp)->GetNumSamples( PD(filp) );
 
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
     unsigned mode = ACFI_MODE&CM_EXCLUSIVE_OPTS;
     unsigned tagging = mode==CM_BINARY && PDEV(filp)->m_dpd.sample_tagging;
 
@@ -538,7 +536,6 @@ ssize_t sim_rowdev_read (
 
     PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu end\n", f_pos, tcount );
 
-    filp->f_pos = f_pos;
     *posp = f_pos;
     return tcount;
 }
