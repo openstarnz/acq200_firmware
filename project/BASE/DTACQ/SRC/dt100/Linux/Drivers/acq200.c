@@ -718,12 +718,13 @@ static ssize_t acq200_bridge_write (
 
 extern int verify_ioctl( struct inode *inode, struct file *filp,
                          unsigned int cmd, unsigned long arg);
-extern int acq32_ioctl (struct inode *inode, struct file *filp,
-			unsigned int cmd, unsigned long arg);
+extern long acq32_unlocked_ioctl (struct file *filp,
+				  unsigned int cmd, unsigned long arg);
 
-int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg)
+long acq200_bridge_unlocked_ioctl (struct file *filp,
+                                   unsigned int cmd, unsigned long arg)
 {
+    struct inode *inode = acq32_file_inode( filp );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
     if ( rc != 0 ) return rc;
@@ -755,7 +756,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
 	return -EINVAL;
 #endif /* PGMCOMOUT */
     default:
-        return acq32_ioctl( inode, filp, cmd, arg );
+        return acq32_unlocked_ioctl( filp, cmd, arg );
     }
 }
 
@@ -768,7 +769,7 @@ acq200_bridge_driver_init( struct DevGlob *dg )
 		.read = acq200_bridge_read,
 		.write = acq200_bridge_write,
 		.release = acq200_bridge_release,
-		.ioctl = acq200_bridge_ioctl,
+		.unlocked_ioctl = acq200_bridge_unlocked_ioctl,
 		.mmap = acq200_bridge_mmap
 	};
 	int rc;

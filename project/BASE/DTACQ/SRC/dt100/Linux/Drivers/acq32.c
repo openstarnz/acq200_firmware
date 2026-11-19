@@ -1338,18 +1338,19 @@ int verify_ioctl( struct inode *inode, struct file *filp,
      * the old verify_area which returned 0 on success).
      */
     if ((_IOC_DIR(cmd) & _IOC_READ) &&
-        !access_ok(VERIFY_WRITE, (void __user *)arg, size))
+        !acq32_access_ok(VERIFY_WRITE, (void __user *)arg, size))
         return -EINVAL;
     else if ((_IOC_DIR(cmd) & _IOC_WRITE) &&
-             !access_ok(VERIFY_READ, (void __user *)arg, size))
+             !acq32_access_ok(VERIFY_READ, (void __user *)arg, size))
         return -EINVAL;
     else
         return 0;
 }
                  
-int acq32_ioctl (struct inode *inode, struct file *filp,
-                 unsigned int cmd, unsigned long arg)
+long acq32_unlocked_ioctl (struct file *filp,
+                           unsigned int cmd, unsigned long arg)
 {
+    struct inode *inode = acq32_file_inode( filp );
     struct Acq32Device *dev = acq32_get_device( acq32_file_rdev( filp ) );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
@@ -1494,9 +1495,10 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
 }
 
 
-int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg)
+long acq32_rowdev_unlocked_ioctl (struct file *filp,
+                                  unsigned int cmd, unsigned long arg)
 {
+    struct inode *inode = acq32_file_inode( filp );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
     if ( rc != 0 ) return rc;
@@ -1524,7 +1526,7 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
             return -EINVAL;
         }
     default:
-        return acq32_ioctl( inode, filp, cmd, arg );
+        return acq32_unlocked_ioctl( filp, cmd, arg );
     }
 }
 
@@ -2038,124 +2040,124 @@ int acq32_mmap_host(struct file* filp, struct vm_area_struct* vma )
 static struct file_operations acq32_fops = {          // default ops
     .owner = THIS_MODULE,
 #ifndef ACQ200
-    llseek:  acq32_lseek,
-    read:    acq32_read,
+    .llseek  = acq32_lseek,
+    .read    = acq32_read,
 
-    mmap:    acq32_mmap,    // acq32_mmap
+    .mmap    = acq32_mmap,    // acq32_mmap
 #endif
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    mmap:    acqXX_mmap_csr,
-    open:    acq32_open,
-    release: acq32_release,
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acqXX_mmap_csr,
+    .open    = acq32_open,
+    .release = acq32_release,
 };
 
 
 static struct file_operations acq32_AO_immediate_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_AO_immediate_write,
-    release:  acq32_release,
+    .write    = acq32_AO_immediate_write,
+    .release  = acq32_release,
 };
 static struct file_operations acq32_AO_fungen_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_AO_function_write,
-    open:     acq32_AO_fungen_open,
-    release:  acq32_AO_fungen_release,
+    .write    = acq32_AO_function_write,
+    .open     = acq32_AO_fungen_open,
+    .release  = acq32_AO_fungen_release,
 };
 
 static struct file_operations acq32_DO_immediate_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_DO_immediate_write,
-    release:  acq32_release,
+    .write    = acq32_DO_immediate_write,
+    .release  = acq32_release,
 };
 
 static struct file_operations acq32_DO_fungen_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_DO_function_write,
-    open:     acq32_DO_fungen_open,
-    release:  acq32_DO_fungen_release,
+    .write    = acq32_DO_function_write,
+    .open     = acq32_DO_fungen_open,
+    .release  = acq32_DO_fungen_release,
 };
 
 
 static struct file_operations acq32_test_fops = {
     .owner = THIS_MODULE,
-    read:     acq32_test_read,
-    release:  acq32_release,
+    .read     = acq32_test_read,
+    .release  = acq32_release,
 };
 #ifndef ACQ200
 static struct file_operations acq32_rom_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_rom_read,    // acq32_read
-    ioctl:   acq32_ioctl,       // acq32_ioctl
-    mmap:    acq32_mmap_rom,    // acq32_mmap
-    open:    acq32_rom_open,    // acq32_open
-    release: acq32_rom_release, // acq32_release
+    .read    = acq32_rom_read,    // acq32_read
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_rom,    // acq32_mmap
+    .open    = acq32_rom_open,    // acq32_open
+    .release = acq32_rom_release, // acq32_release
 };
 #endif
 static struct file_operations acq32_dmabuf_fops = {
     .owner = THIS_MODULE,
 #ifndef ACQ200
-    read:    acq32_dmabuf_read,    // acq32_read
+    .read    = acq32_dmabuf_read,    // acq32_read
 #endif
-    ioctl:   acq32_ioctl,          // acq32_ioctl
-    mmap:    acq32_mmap_bigphysmem,// acq32_mmap
-    release: acq32_release,
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_bigphysmem,// acq32_mmap
+    .release = acq32_release,
 };
 
 static struct file_operations acq32_hostbuf_fops = {
 	.owner = THIS_MODULE,
-	read: acq32_hostbuf_read,
-	mmap:    acq32_mmap_host,    // acq32_mmap
-	release: acq32_release,
+	.read = acq32_hostbuf_read,
+	.mmap    = acq32_mmap_host,    // acq32_mmap
+	.release = acq32_release,
 };
 
 static struct file_operations acq32_master_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_master_read,    // acq32_read
-    write:   acq32_master_write,   // acq32_write
-    ioctl:   acq32_ioctl,          // acq32_ioctl
-    open:    acq32_master_open,    // acq32_open
-    release: acq32_master_release, // acq32_release
+    .read    = acq32_master_read,    // acq32_read
+    .write   = acq32_master_write,   // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .open    = acq32_master_open,    // acq32_open
+    .release = acq32_master_release, // acq32_release
 };
 
 static struct file_operations acq32_channel_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_channel_read,    // acq32_read
-    write:   acq32_data_write,      // acq32_write
-    ioctl:   acq32_ioctl,           // acq32_ioctl
-    mmap:    acq32_mmap_channel,    // acq32_mmap
-    release: acq32_release,         // acq32_release
+    .read    = acq32_channel_read,    // acq32_read
+    .write   = acq32_data_write,      // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_channel,    // acq32_mmap
+    .release = acq32_release,         // acq32_release
 };
 
 static struct file_operations acq32_rowdev_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_row_read,        // acq32_read
-    write:   acq32_data_write,      // acq32_write
-    ioctl:   acq32_ioctl,           // acq32_ioctl
-    release: acq32_release,         // acq32_release
+    .read    = acq32_row_read,        // acq32_read
+    .write   = acq32_data_write,      // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,         // acq32_release
 };
 
 static struct file_operations acq32_status_fops = {
     .owner = THIS_MODULE,
-    open:    acq32_status_open,
-    read:    acq32_status_read,
-    write:   acq32_status_write,
-    release: acq32_status_release,
+    .open    = acq32_status_open,
+    .read    = acq32_status_read,
+    .write   = acq32_status_write,
+    .release = acq32_status_release,
 };
 static struct file_operations sim_channel_fops = {
     .owner = THIS_MODULE,
-    read:    sim_channel_read,    // acq32_read
-    write:   acq32_data_write,    // acq32_write
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    release: acq32_release,    // acq32_release
-    mmap:    acq32_mmap_channel,    // acq32_mmap
+    .read    = sim_channel_read,    // acq32_read
+    .write   = acq32_data_write,    // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,    // acq32_release
+    .mmap    = acq32_mmap_channel,    // acq32_mmap
 };
 
 static struct file_operations sim_rowdev_fops = {
     .owner = THIS_MODULE,
-    read:    sim_rowdev_read,    // acq32_read
-    write:   acq32_data_write,    // acq32_write
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    release: acq32_release,    // acq32_release
+    .read    = sim_rowdev_read,    // acq32_read
+    .write   = acq32_data_write,    // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,    // acq32_release
 };
 
 
