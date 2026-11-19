@@ -527,7 +527,7 @@ MODULE_PARM_DESC( name, descr );
 
 MODULE_AUTHOR("Peter.Milne@d-tacq.com");
 MODULE_DESCRIPTION("D-TACQ Solutions Ltd acq32pci/acq16pci/acq32cpci driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
             
 MPI( acq32_use_interrupts,   1, "enable/disable interrupts      (1)" );
 MPI( acq32_simulate,         0, "set to 1 to enable simulation  (0)" );
