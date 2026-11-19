@@ -252,12 +252,14 @@ static void acq32_vma_release(struct vm_area_struct* vma )
  * is an access the mapping does not cover.  Without a fault handler the VM
  * would quietly back the address with an anonymous page.
  */
-static int acq32_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+static int acq32_vma_fault_impl(struct vm_area_struct *vma, unsigned long address)
 {
-	PDEBUGL(4)("%p 0x%08lx\n", vma, (unsigned long)vmf->virtual_address);
+	PDEBUGL(4)("%p 0x%08lx\n", vma, address);
 
 	return VM_FAULT_SIGBUS;
 }
+
+ACQ32_DEFINE_VMA_FAULT(acq32_vma_fault, acq32_vma_fault_impl)
 
 
 
@@ -386,7 +388,7 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 #ifdef LINUX_NEW_PCI
     /* The buffers belong to this vma alone: a fork()ed copy would keep
      * mapping them after acq32_vma_release() has freed them. */
-    vma->vm_flags |= VM_DONTCOPY;
+    vm_flags_set( vma, VM_DONTCOPY );
 #endif
 
     for (ibuf=allocated=0; allocated<vsize; ++ibuf, allocated += DMABUF_SIZE) {
