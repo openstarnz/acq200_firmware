@@ -2476,7 +2476,7 @@ static void iterate_coreDevInit(void)
 	}
 }
 
-int init_module(void)
+static int acq32_driver_init(void)
 {
 	PDEBUG( "ACQ32 copyright (c) D-TACQ Solutions Ltd 2001\n"
 		"ACQ200 copyright (c) D-TACQ Solutions Ltd 2003\n"
@@ -2513,7 +2513,7 @@ int init_module(void)
 	return 0; /* succeed */
 }
 
-void cleanup_module(void)
+static void acq32_driver_exit(void)
 {
     int ii;
 
@@ -2561,3 +2561,6 @@ void cleanup_module(void)
 
     /* and call the cleanup functions for friend devices */
 }
+
+module_init(acq32_driver_init);
+module_exit(acq32_driver_exit);
