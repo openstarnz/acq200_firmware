@@ -1012,8 +1012,16 @@ static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 	 * byte to strip: a tagged mfa would have been dropped there.  Take
 	 * the offset into the buffer, never a bus address to pointer
 	 * conversion, as bus != physical behind an IOMMU.
+	 *
+	 * Not every caller got its mfa from the ISR queues (the aux reply is
+	 * read straight from aux_mfa, which is 0 when nothing arrived), so
+	 * apply the ISR's test again and return NULL for a non-frame.
 	 */
 	u32 offset = mfa - device->dmabuf.pa;
+
+	if ( !mfa_is_outbound_frame( device, mfa ) ){
+		return NULL;
+	}
 
 	/* the card wrote this frame: make it visible to the CPU first */
 	acq32_dma_sync_for_cpu( device, mfa,

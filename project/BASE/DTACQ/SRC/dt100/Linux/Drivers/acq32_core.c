@@ -1639,6 +1639,11 @@ static void acq32_streaming_isr_bh( void* clidata )
 		STREAM_MFA_INVALID ){
 		Message *message = (Message*)device->i2o_mfa2va(device, mfa);
 
+		if ( message == NULL ){
+			device->m_dpd.i2o_packets_discarded++;
+			continue;
+		}
+
 		PDEBUGL(2)(  " mfa 0x%08x type 0x%08x id %04d len %d\n", 
 			    mfa, MT_ID(message->header.type), 
 			    message->header.id,
@@ -2345,10 +2350,23 @@ static int acq32_printAuxReply( struct Acq32Path* path )
 {
     struct Acq32Device* device = path->device;
     unsigned mfa     = device->m_dpd.aux_mfa;
-    Message* message = (Message*)device->i2o_mfa2va(device, mfa);
-    char* printable  = message->payload.cdata;
-    int   len        = MIN( strlen( printable ), MESSAGE_LEN );
-  
+    Message* message;
+    char* printable;
+    int   len;
+
+    /* aux_mfa is 0 if the wait was interrupted before a reply arrived */
+    if ( mfa == 0 ){
+        return -EIO;
+    }
+    message = (Message*)device->i2o_mfa2va(device, mfa);
+    if ( message == NULL ){
+        /* not a frame of ours: do not hand it back to the board */
+        device->m_dpd.aux_mfa = 0;
+        return -EIO;
+    }
+    printable = message->payload.cdata;
+    len       = MIN( strlen( printable ), MESSAGE_LEN );
+
     acq32_path_readbuffer_put( path, printable, len );
 
     printable[len] = '\0';
@@ -2980,10 +2998,16 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
 #endif
         { //XXXX (told you it was a hack!
             Message* message = (Message*)device->i2o_mfa2va( device, mfa );
+            u16 id, mylen;
+            u32 mtype;
 
-            u16 id    = message->header.id;
-            u16 mylen = message->header.length;
-            u32 mtype = message->header.type;
+            if ( message == NULL ){
+                device->m_dpd.i2o_packets_discarded++;
+                continue;
+            }
+            id    = message->header.id;
+            mylen = message->header.length;
+            mtype = message->header.type;
 
             if ( (id&MID_NOT_VALID) != 0 ){
 
