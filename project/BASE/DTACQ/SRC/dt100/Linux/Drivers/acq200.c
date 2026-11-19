@@ -82,9 +82,9 @@ static struct {
 
 
 #ifdef PGMCOMOUT
-#define CHAN(file) CHANNEL((file)->f_dentry->d_inode->i_rdev)
+#define CHAN(file) CHANNEL(acq32_file_rdev(file))
 #else
-#define CHAN(file) ((file)->f_dentry->d_inode->i_rdev&0x00ff)
+#define CHAN(file) (acq32_file_rdev(file)&0x00ff)
 #endif
 
 static Message *build_hrd_message(
@@ -734,7 +734,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
                 
@@ -742,7 +742,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
                 
             return acq200_fetchDataToLocalBuffer( 
                 filp,
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 descr.buffer,
                 descr.nsamples,
                 descr.istart,

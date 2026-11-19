@@ -696,7 +696,7 @@ int acq32_get_board( dev_t i_rdev )
 
 struct Acq32Device* acq32_get_device_from_filp( struct file* filp )
 {
-    return acq32_get_device(  filp->f_dentry->d_inode->i_rdev );
+    return acq32_get_device( acq32_file_rdev( filp ) );
 }
 
 struct Acq32Device* acq32_get_device_from_board( int board )
@@ -1350,7 +1350,7 @@ int verify_ioctl( struct inode *inode, struct file *filp,
 int acq32_ioctl (struct inode *inode, struct file *filp,
                  unsigned int cmd, unsigned long arg)
 {
-    struct Acq32Device *dev = acq32_get_device( filp->f_dentry->d_inode->i_rdev );
+    struct Acq32Device *dev = acq32_get_device( acq32_file_rdev( filp ) );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
     if ( rc != 0 ) return rc;
@@ -1376,15 +1376,15 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
-                
+
             UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
-                
-            return dev->fetchDataToLocalBuffer( 
+
+            return dev->fetchDataToLocalBuffer(
                 filp,
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 descr.buffer,
                 descr.nsamples,
                 descr.istart,
@@ -1394,10 +1394,10 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
             return -EINVAL;
         }
     case ACQ32_IOREAD_GETPHYSICAL:
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
-            return acq32_getBufferPhysicalAddr( 
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
+            return acq32_getBufferPhysicalAddr(
                 PD(filp),
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 (void*)arg
                 );
         }else{
@@ -1506,13 +1506,13 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
-                
+
             UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
-                
-            return acq32_fetchDataToLocalBuffer( 
+
+            return acq32_fetchDataToLocalBuffer(
                 filp,
                 ALLCHANNELS,
                 descr.buffer,
