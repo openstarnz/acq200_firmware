@@ -1622,6 +1622,15 @@ int acq32_request_irq( struct Acq32Path* path )
                 );
 
             device->use_interrupts = result==0;
+
+            /* acq32_quiesce_device() leaves the card's outbound
+             * interrupts masked, and a card keeps that state across a
+             * module reload or a rebind: enable them whenever a handler
+             * is installed.  A simulated board has no card to write. */
+            if ( device->use_interrupts && !device->simulated &&
+                 device->csr.va ){
+                writel( 0, CSR( device, PCI_OUT_INT_MASK ) );
+            }
         }
         rv = device->p_md->OnOpen && device->p_md->OnOpen( path );
     }
