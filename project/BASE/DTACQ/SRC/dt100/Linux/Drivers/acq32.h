@@ -766,10 +766,6 @@ struct Acq32Device {
      * the card, and the host buffer mapping is gone */
     int going_away;
 
-    /* counts the times a removed device was bound again: a client from
-     * before a rebind holds no place in nclients any more */
-    int generation;
-
     int vmas;                      // count of open vma's
 
     struct BigBuf {
@@ -1016,7 +1012,6 @@ struct Acq32Path {
 
     short is_blocking; 
     short uses_irq;               // not all paths use irq
-    int generation;               // device->generation when counted in nclients
                    
 
     int nsamples;
