@@ -456,10 +456,34 @@ void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len )
     }
 }
 
-void acq32_dma_sync_for_cpu( struct Acq32Device* device, u32 bus, size_t len )
+/*
+ * Ownership of a mapped buffer.  Each buffer is mapped DMA_BIDIRECTIONAL
+ * and belongs to the card except while the CPU is using it.  Where the
+ * platform bounces or caches DMA, the CPU's and the card's views of the
+ * buffer agree only at these calls, whatever the address of the pages:
+ *
+ *   acq32_dma_sync_for_cpu()     before the CPU reads data the card wrote,
+ *                                or modifies the buffer
+ *   acq32_dma_sync_for_device()  after the CPU has read or written, and
+ *                                before the card is told to use the buffer
+ *
+ * 'bus' is the handle the buffer was mapped with; offset and len select
+ * the part touched.  Simulated devices have no mapping: nothing to do.
+ */
+void acq32_dma_sync_for_cpu(
+    struct Acq32Device* device, u32 bus, size_t offset, size_t len )
 {
     if ( !device->simulated ){
-        dma_sync_single_for_cpu(
-            &device->p_pci->dev, bus, len, DMA_BIDIRECTIONAL );
+        dma_sync_single_range_for_cpu(
+            &device->p_pci->dev, bus, offset, len, DMA_BIDIRECTIONAL );
+    }
+}
+
+void acq32_dma_sync_for_device(
+    struct Acq32Device* device, u32 bus, size_t offset, size_t len )
+{
+    if ( !device->simulated ){
+        dma_sync_single_range_for_device(
+            &device->p_pci->dev, bus, offset, len, DMA_BIDIRECTIONAL );
     }
 }

@@ -3378,7 +3378,7 @@ void fetchDataReturnHandler(
                  * bounced (pages below 4 GiB, 32 bit mask), so there is
                  * no matching sync back to the device. */
                 acq32_dma_sync_for_cpu(
-                    path->device, requests[ireq].pci, DMABUF_SIZE );
+                    path->device, requests[ireq].pci, 0, DMABUF_SIZE );
 
                 memset( &requests[ireq], 0, sizeof(HostRequestDataRecord) );
                 ++zeros;

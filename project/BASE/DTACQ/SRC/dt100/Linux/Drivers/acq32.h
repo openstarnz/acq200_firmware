@@ -1570,7 +1570,9 @@ void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa );
 int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus );
 void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len );
 void acq32_dma_sync_for_cpu(
-	struct Acq32Device* device, u32 bus, size_t len );
+	struct Acq32Device* device, u32 bus, size_t offset, size_t len );
+void acq32_dma_sync_for_device(
+	struct Acq32Device* device, u32 bus, size_t offset, size_t len );
 
 /*
  * ACQ200 bigbuf is RAM hidden with mem=, outside the DMA API.  This turns

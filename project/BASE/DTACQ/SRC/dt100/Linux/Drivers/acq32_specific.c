@@ -991,8 +991,18 @@ static int acq32_getImagesDef(
 
 
 
+/*
+ * Hand a frame back to the card.  The CPU may have read it or written to it
+ * (an aux reply is terminated in place), so give it back to the device
+ * before the card is told it is free to fill it again.
+ */
 static void acq32_dev_i2o_return_mfa(struct Acq32Device* device, unsigned mfa)
 {
+	if ( mfa_is_outbound_frame( device, mfa ) ){
+		acq32_dma_sync_for_device(
+			device, device->dmabuf.pa, mfa - device->dmabuf.pa,
+			device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
+	}
 	writel( mfa, CSR( device, PCI_I2O_OUTBOUND_FIFO ) );
 }
 
@@ -1024,7 +1034,7 @@ static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 	}
 
 	/* the card wrote this frame: make it visible to the CPU first */
-	acq32_dma_sync_for_cpu( device, mfa,
+	acq32_dma_sync_for_cpu( device, device->dmabuf.pa, offset,
 				device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
 
 	return (char*)device->dmabuf.va + offset;
