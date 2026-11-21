@@ -1643,6 +1643,7 @@ int acq32_request_irq( struct Acq32Path* path )
      * the next interrupt then jumped into freed module memory.
      */
     path->uses_irq = 1;
+    path->generation = device->generation;
 
     up( &device->m_dpd.irq_req_mutex );
 
@@ -1666,7 +1667,13 @@ int acq32_free_irq( struct Acq32Path* path )
     PDEBUGL(3)( "acq32_free_irq() nclients %d\n", device->nclients );
 
     down( &device->m_dpd.irq_req_mutex );
-    
+
+    /* a rebind restarted the client count without this path */
+    if ( path->generation != device->generation ){
+        up( &device->m_dpd.irq_req_mutex );
+        return 0;
+    }
+
     if ( --device->nclients == 0 ){
         int used_interrupts = device->use_interrupts != 0;
         rv = device->p_md->OnRelease && device->p_md->OnRelease( path ); 
@@ -2449,6 +2456,56 @@ static void acq32_discard_device( struct Acq32Device* device )
     KFREE( device );
 }
 
+/* The device a card had before it was unbound.  It keeps its slot, its
+ * major and its card mappings until the module exits, so the device nodes
+ * made at load still name it. */
+static struct Acq32Device* acq32_find_removed_device( struct pci_dev* p_dev )
+{
+    int idev;
+
+    for ( idev = 0; idev != S_acq32.idev; ++idev ){
+        struct Acq32Device* device = S_acq32.devices[idev];
+
+        if ( device && device->p_pci == p_dev && device->going_away ){
+            return device;
+        }
+    }
+    return NULL;
+}
+
+/* Undo acq32_pci_remove() for a card that is bound again: only the host
+ * buffer mapping was given up, its pages are still there.  The first open
+ * after this installs the interrupt handler and tells the card the buffer's
+ * new address. */
+static int acq32_revive_device( struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+    unsigned long flags;
+    u32 pa;
+    int rc;
+
+    rc = acq32_dma_map( device, device->dmabuf.va, DMABUF_SIZE, &pa );
+    if ( rc ){
+        return rc;
+    }
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
+    device->dmabuf.pa = pa;
+    device->dmabuf.len = DMABUF_SIZE;
+    device->dmabuf.mapped = 1;
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
+
+    /* files left open across the remove no longer count as clients */
+    down( &dp->irq_req_mutex );
+    device->nclients = 0;
+    device->generation++;
+    up( &dp->irq_req_mutex );
+
+    down( &dp->mbox_mutex );
+    device->going_away = 0;
+    up( &dp->mbox_mutex );
+    return 0;
+}
+
 static int acq32_pci_probe( struct pci_dev* p_dev,
                             const struct pci_device_id* id )
 {
@@ -2491,6 +2548,18 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
                  "32-bit DMA mask not available (%d) — DMA may corrupt\n",
                  rc);
         /* Continue anyway; the warning will be in dmesg. */
+    }
+
+    device = acq32_find_removed_device( p_dev );
+    if ( device ){
+        rc = acq32_revive_device( device );
+        if ( rc ){
+            pci_release_regions( p_dev );
+            pci_disable_device( p_dev );
+            return rc;
+        }
+        pci_set_drvdata( p_dev, device );
+        return 0;
     }
 
     device = acq32_create_device( p_dev );
