@@ -148,10 +148,10 @@ WARNING: this functionality has rotted - don't expect it to work
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/pci.h>
 #include <linux/sched.h>        /* schedule() */
+#include <linux/delay.h>        /* msleep() */
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
@@ -230,7 +230,7 @@ unsigned short acq32_generate_sample_tag(
 	the_tag |= xX << nX_bit;
     }
 
-    device->m_dpd.subframe_id = (++device->m_dpd.subframe_id)&SUBFRAME_MASK;
+    device->m_dpd.subframe_id = (device->m_dpd.subframe_id+1)&SUBFRAME_MASK;
     return the_tag;
 }
 
@@ -263,7 +263,7 @@ ssize_t sim_channel_read (
     size_t tcount = 0;
     int NSAMPLES = PDRVR(filp)->GetNumSamples( PD(filp) );
 
-    unsigned long f_pos = (unsigned long)filp->f_pos;
+    unsigned long f_pos = (unsigned long)*posp;
 
     if ( f_pos > NSAMPLES ){
         return 0;
@@ -311,7 +311,7 @@ ssize_t sim_channel_read (
         }
     }
 
-    filp->f_pos = f_pos;
+    *posp = f_pos;
     return tcount;
 }
 
@@ -327,7 +327,7 @@ ssize_t sim_streaming_rowdev_read (
     unsigned mode = ACFI_MODE&CM_EXCLUSIVE_OPTS;
     unsigned tagging = mode==CM_BINARY && PDEV(filp)->m_dpd.sample_tagging;
 
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
     unsigned stride = dp->streaming&0xffff;
     size_t tcount = 0;
 
@@ -343,12 +343,11 @@ ssize_t sim_streaming_rowdev_read (
     while ( f_pos >= (samples_now = dp->nsamples_actual.pre) ){
         int rv;
 
-        if ( !MOD_IN_USE ){
-	    PDEBUGL(1)( "oops - module not in use, bale out\n" );
+        if ( dp->state == ST_STOP ){
+	    PDEBUGL(1)( "board stopped, bale out\n" );
             return 0;
         }
 
-        init_waitqueue_head( &dp->waitq );
 	rv = interruptible_sleep_on_timeout( &dp->waitq, 100 );
 
 	if ( rv == 0 ){
@@ -424,7 +423,7 @@ ssize_t sim_streaming_rowdev_read (
         }
     }
 
-    filp->f_pos = f_pos;
+    *posp = f_pos;
 
     PDEBUGL(3)( "streaming_rowdev_read() returning %zu\n", tcount );
 
@@ -438,7 +437,7 @@ ssize_t sim_rowdev_read (
     size_t tcount = 0;
     int NSAMPLES = PDRVR(filp)->GetNumSamples( PD(filp) );
 
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
     unsigned mode = ACFI_MODE&CM_EXCLUSIVE_OPTS;
     unsigned tagging = mode==CM_BINARY && PDEV(filp)->m_dpd.sample_tagging;
 
@@ -537,7 +536,7 @@ ssize_t sim_rowdev_read (
 
     PDEBUGL(3)( "sim_rowdev_read pos:%ld count:%zu end\n", f_pos, tcount );
 
-    filp->f_pos = f_pos;
+    *posp = f_pos;
     return tcount;
 }
 
@@ -578,7 +577,15 @@ static int sim_SetMode(
 #define PP_STATUS (PORTA+1)
 
 
-#define GATE_HI     ((inb_p(PP_STATUS)&0X20)!=0)
+/*
+ * The parallel port carries the external gate and clock in and debug
+ * levels out. With acq32_extclock=0 there is no external signal: the port
+ * is not touched and the gate always reads as active.
+ */
+#define PP_OUT(value) \
+    do { if ( acq32_extclock ) outb( (value), PP_DATA ); } while (0)
+#define GATE_HI \
+    (acq32_extclock? ((inb_p(PP_STATUS)&0X20)!=0): (acq32_gate_hi!=0))
 #define GATE_ON     (GATE_HI==acq32_gate_hi)
 #define GATE_OFF    (!GATE_ON)
 
@@ -618,6 +625,39 @@ static int is_clocking(void)
 
 static int idbg;              // output from pport
 
+/*
+ * Requeue the simulated clock for as long as the board is capturing, and
+ * finish when it is stopped. The timer tasks are work items, so they may
+ * sleep: waiting one tick keeps the simulated clock at HZ instead of
+ * spinning a CPU. (acq32_restart_timer_task() is shared with the hardware
+ * driver and tests MOD_IN_USE, which is 0 on 2.6+.)
+ */
+static void sim_restart_timer_task( struct DriverPrivate* dp )
+{
+    if ( dp->state == ST_STOP ){
+        acq32_finish_with_engines( dp );
+    }else{
+        msleep( 1000/HZ );
+        queue_task( &dp->work_task, &tq_timer );
+    }
+}
+
+/*
+ * Stop the simulated clock: wait out a tick in progress, keep it from
+ * requeueing, and leave the board stopped. Used on abort and on unload,
+ * where the work item must not outlive the module or the device.
+ * The work item is only initialised once the board has been armed.
+ */
+void acq32_sim_stop_clock( struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+
+    if ( dp->work_task.work.func ){
+        cancel_work_sync( &dp->work_task.work );
+    }
+    acq32_finish_with_engines( dp );
+}
+
 
 
 void sim_SoftTransientTimerTask( void* args )
@@ -625,8 +665,8 @@ void sim_SoftTransientTimerTask( void* args )
     struct Acq32Device* device = (struct Acq32Device*)args;
     struct DriverPrivate* dp = &device->m_dpd;
     static int istatus;
-  
-    idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+
+    idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 
     if ( dp->nsamples_actual.post < dp->nsamples_requested.post &&
 	 dp->state != ST_STOP                                           ){
@@ -642,7 +682,7 @@ void sim_SoftTransientTimerTask( void* args )
         if ( is_clocking() ){
 	    dp->nsamples_actual.post += SAMPLES_PER_TICK( dp->clock.internal);
         }
-        acq32_restart_timer_task( dp );
+        sim_restart_timer_task( dp );
     }else{
         acq32_finish_with_engines( dp );
         istatus = 0;
@@ -662,7 +702,7 @@ void sim_GatedTransientTimerTask( void* args )
     switch( dp->state ){
     case ST_ARM:
 
-        idbg ^= prescale==0? 0x1: 0x0; outb( idbg, PP_DATA );
+        idbg ^= prescale==0? 0x1: 0x0; PP_OUT( idbg );
 
         if ( GATE_ON ){
             dp->state = ST_RUN;    // fall thru
@@ -672,7 +712,7 @@ void sim_GatedTransientTimerTask( void* args )
 
     case ST_RUN:
 
-        idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+        idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 
         if ( GATE_ON && 
              dp->nsamples_actual.post < dp->nsamples_requested.post ){
@@ -688,7 +728,7 @@ void sim_GatedTransientTimerTask( void* args )
         return;                   // finished
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 
 
@@ -710,7 +750,7 @@ void sim_GatedContinuousTimerTask( void* args )
     switch( dp->state ){
     case ST_ARM:
 
-        idbg ^= prescale==0? 0x1: 0x0; outb( idbg, PP_DATA );
+        idbg ^= prescale==0? 0x1: 0x0; PP_OUT( idbg );
 
         if ( GATE_ON ){
             dp->state = ST_RUN;    // and fall thru
@@ -737,7 +777,7 @@ void sim_GatedContinuousTimerTask( void* args )
             if ( dp->nsamples_actual.pre < MAX_PRESAMPLES && is_clocking() ){
 
 	        if ( prescale&0x10 ){
-                    idbg ^= 0x0f; outb( idbg, PP_DATA );
+                    idbg ^= 0x0f; PP_OUT( idbg );
                 }
 	        dp->nsamples_actual.pre += SAMPLES_PER_TICK(dp->clock.internal);
 	    }
@@ -752,7 +792,7 @@ void sim_GatedContinuousTimerTask( void* args )
 	    if ( is_clocking() ){
                 dp->nsamples_actual.post += SAMPLES_PER_TICK(dp->clock.internal);
 
-                idbg = (idbg+1)&0x0f; outb( idbg, PP_DATA );
+                idbg = (idbg+1)&0x0f; PP_OUT( idbg );
 	    }
             break;                            // repeat
         }
@@ -763,7 +803,7 @@ void sim_GatedContinuousTimerTask( void* args )
         return; 
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 void sim_SoftContinuousTimerTask( void* args )
 {
@@ -797,10 +837,10 @@ void sim_SoftContinuousTimerTask( void* args )
         return; 
     }
 
-    acq32_restart_timer_task( dp );
+    sim_restart_timer_task( dp );
 }
 
-static int sim_SetChannelMaskAll( 
+static int sim_SetChannelMaskAll(
     struct Acq32Path* path, 
     char* smask,
     int boost
@@ -853,7 +893,6 @@ static int sim_SetArmed( struct Acq32Path* path )
             acq32_show_busy( TRUE );
             init_capture( path );
 #ifdef LINUX_NEW_PCI
-            init_waitqueue_head( &dp->waitq );
 	    INIT_TQUEUE( &dp->work_task, 
 			 dp->mode==M_SOFT_CONTINUOUS?  sim_SoftContinuousTimerTask:
 			 dp->mode==M_GATED_TRANSIENT?  sim_GatedTransientTimerTask:
@@ -870,8 +909,10 @@ static int sim_SetArmed( struct Acq32Path* path )
                 dp->mode==M_GATED_CONTINUOUS? sim_GatedContinuousTimerTask:
 		sim_SoftTransientTimerTask;
             dp->work_task.data = path->device;
-#endif	    
+#endif
 
+            /* ARM before the tick can run, or it sees ST_STOP and finishes */
+            dp->state = ST_ARM;
             queue_task( &dp->work_task, &tq_timer );
         }else{
             int timed_out = 
@@ -880,8 +921,8 @@ static int sim_SetArmed( struct Acq32Path* path )
             if ( timed_out ){
 		PDEBUG( "ERROR:TIMED OUT - please report to DTACQ \n" );
 	    }
+            dp->state = ST_ARM;
 	}
-        dp->state = ST_ARM;
         break;
     default:
 	// do nothing
@@ -898,14 +939,14 @@ static int sim_SetAbort( struct Acq32Path* path )
         PDEBUG( "%d 0x%02x", ii, statuses[ii] );
     }
 #endif
-    path->device->m_dpd.state = ST_STOP;
+    acq32_sim_stop_clock( path->device );
     return 0;
 }
 
 static int sim_GetNumSamples( struct Acq32Path* path )
 {
-    return path->device->m_dpd.nsamples_actual.pre + 
-	path->device->m_dpd.nsamples_actual.pre;
+    return path->device->m_dpd.nsamples_actual.pre +
+	path->device->m_dpd.nsamples_actual.post;
 }
 
 static int sim_SetChannel(
@@ -962,6 +1003,102 @@ static int sim_GetInfo( struct Acq32Path* path, enum StatusSelect selector )
     return 0;
 }
 /*
+ * Every method of the master driver table has a simulator implementation,
+ * so no command on a simulated board falls through to the hardware method
+ * of the same name, which would reach the board's mailbox registers.
+ * Methods with nothing to simulate succeed and do nothing.
+ */
+
+static int sim_GetNumChannels( struct Acq32Path* path )
+{
+    SlaveIterState sis = {};
+    struct Acq32Device* device;
+    int nchannels = 0;
+
+    while ( (device = acq32_getNextSlave( path, &sis )) != NULL ){
+        nchannels += hweight32( device->m_dpd.channel_mask );
+    }
+    return nchannels;
+}
+
+static int sim_GetMemoryDepth( struct Acq32Path* path, int channel )
+// samples per channel for the 0-based channel of the path's boards, 0 if
+// the channel is not enabled, -1 if there is no such channel
+{
+    SlaveIterState sis = {};
+    struct Acq32Device* device;
+    int ichan = 0;
+
+    while ( (device = acq32_getNextSlave( path, &sis )) != NULL ){
+        struct DriverPrivate* dp = &device->m_dpd;
+        int nenabled = hweight32( dp->channel_mask );
+
+        if ( channel >= ichan && channel < ichan + dp->nchannels ){
+            if ( nenabled == 0 ||
+                 (dp->channel_mask&(1<<(channel-ichan))) == 0 ){
+                return 0;
+            }else{
+                return dp->total_sample_length/nenabled;
+            }
+        }
+        ichan += dp->nchannels;
+    }
+    return -1;
+}
+
+static int sim_SetStreaming( struct Acq32Path* path, int npairs, int burst )
+{
+    return 0;
+}
+static int sim_SetSyncRoute( struct Acq32Path* path, int func, unsigned mask )
+{
+    return 0;
+}
+static int sim_SetInt( struct Acq32Path* path, int arg )
+// SetDistributor, SetRoute, SetCal, waitState, ReserveAO
+{
+    return 0;
+}
+static int sim_SetPhase(
+    struct Acq32Path* path, enum FX fx, enum SUBJECT ph, int nsamples )
+{
+    return 0;
+}
+static int sim_GetPhase(
+    struct Acq32Path* path,
+    enum FX fx, enum SUBJECT ph, enum PHASE_PROPERTY property )
+{
+    return 0;
+}
+static int sim_SetEvent(
+    struct Acq32Path* path,
+    enum FX fx, enum SUBJECT event, struct EventConditionDef* ecd )
+{
+    return 0;
+}
+static int sim_GetEvent(
+    struct Acq32Path* path, enum FX fx, enum SUBJECT event )
+// and FireEvent
+{
+    return 0;
+}
+static int sim_SetClock( struct Acq32Path* path, enum FX fx, int clk_source )
+{
+    return 0;
+}
+static int sim_SetUser(
+    struct Acq32Path* path, int user_led, enum USERLED mode )
+{
+    return 0;
+}
+static int sim_SetThreshold(
+    struct Acq32Path* path,
+    enum ThresholdSelect channel, short trigger_above, short trigger_below )
+{
+    return 0;
+}
+
+/*
  * instantiate the master driver object
  */
 
@@ -971,24 +1108,42 @@ struct Acq32MasterDriver* acq32_getSimul(void)
 
 	sim_GetState,         // GetState
 	sim_SetChannelMaskAll,// SetChannelMask
-	NULL,                 // GetMemoryDepth
+	sim_GetMemoryDepth,   // GetMemoryDepth
 	sim_SetMode,          // SetMode
 	sim_SetArmed,         // SetArmed
 	sim_SetAbort,         // SetAbort
 	sim_GetNumSamples,    // GetNumSamples
-	NULL,                 // GetNumChannels
-	NULL,                 // OnOpen
-	NULL,                 // OnRelease
+	sim_GetNumChannels,   // GetNumChannels
+	sim_null,             // OnOpen
+	sim_null,             // OnRelease
 	sim_null,             // SetInternalClock
 	sim_null,             // SetExternalClock
-	sim_null,             // GetInternalClock
+	sim_null,             // SetSampleTagging
 	sim_null,             // SetDIO
-	sim_null,             // getDIO
-	sim_SetChannel,       // SetChannel 
+	sim_null,             // GetDIO
+	sim_SetChannel,       // SetChannel
+	sim_SetStreaming,     // SetStreaming
 
 	GetRange:	sim_GetRange,
 	GetAvailableChannels:	sim_GetAvailableChannels,
-	GetInfo: sim_GetInfo
+	GetInfo: sim_GetInfo,
+	DoBigdump:      sim_null,
+	SetDistributor: sim_SetInt,
+	SetRoute:       sim_SetInt,
+	SetSyncRoute:   sim_SetSyncRoute,
+	SetCal:         sim_SetInt,
+	waitState:      sim_SetInt,
+	SetPhase:       sim_SetPhase,
+	GetPhase:       sim_GetPhase,
+	SetEvent:       sim_SetEvent,
+	GetEvent:       sim_GetEvent,
+	FireEvent:      sim_GetEvent,
+	SetClock:       sim_SetClock,
+	ClockNow:       sim_null,
+	ResetGut:       sim_null,
+	ReserveAO:      sim_SetInt,
+	SetUser:        sim_SetUser,
+	SetThreshold:   sim_SetThreshold
     };
 #define NMETHODS (sizeof(struct Acq32MasterDriver)/(sizeof (void*)))    
 

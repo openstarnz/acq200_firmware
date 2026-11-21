@@ -505,7 +505,6 @@
 #include <linux/ioport.h>
 #include <linux/timer.h>
 #include <linux/wait.h>
-#include <linux/isdnif.h>
 #include <linux/tty.h>
 #include <linux/serial_reg.h>
 /* end kitchen sink */
@@ -524,7 +523,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
@@ -788,7 +786,14 @@ static int _acq32_devSendCommand(
     int rv;
     
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
-    
+
+    /* going_away is set under this mutex, so a command is either already
+     * complete or refused here */
+    if ( device->going_away ){
+        MUTEX_UP( &device->m_dpd.mbox_mutex );
+        return -ENODEV;
+    }
+
     command |= BP_CI_DONE+BP_CI_COMMAND;
 
     if ( a4 ){
@@ -848,6 +853,10 @@ int acq32_devSendCommand( struct Acq32Device* device, unsigned command )
 int acq32_setArmSpin( struct Acq32Device* device )
 {
     unsigned command = BP_SET_FUNCODE(BP_FC_SET_SPIN)|BP_CI_DONE|BP_CI_COMMAND;
+
+    if ( device->going_away ){
+        return -ENODEV;
+    }
     device->set_mailbox( device, BP_MB_COMMAND, command );
 
     // give acq32 poller plenty of time to respond
@@ -1407,9 +1416,13 @@ static Message* getMessageBuffer( struct Acq32Path* path )
 int acq32_sendI2O_kbuf( struct Acq32Path* path, Message* message )
 {
     struct Acq32Device* device = path->device;
-    unsigned mfa = readl( CSR( device, PCI_I2O_INBOUND_FIFO ) );
+    unsigned mfa;
 
-    
+    if ( device->going_away ){
+        return -ENODEV;
+    }
+    mfa = readl( CSR( device, PCI_I2O_INBOUND_FIFO ) );
+
     if ( mfa == PCI_I2O_INVALID_MFA ) {
         PDEBUG( "ERROR: no i2o buffers available" );
         return -EACQ32_NO_INCOMING_I2O;
@@ -1641,6 +1654,11 @@ static void acq32_streaming_isr_bh( void* clidata )
 		STREAM_MFA_INVALID ){
 		Message *message = (Message*)device->i2o_mfa2va(device, mfa);
 
+		if ( message == NULL ){
+			device->m_dpd.i2o_packets_discarded++;
+			continue;
+		}
+
 		PDEBUGL(2)(  " mfa 0x%08x type 0x%08x id %04d len %d\n", 
 			    mfa, MT_ID(message->header.type), 
 			    message->header.id,
@@ -1847,7 +1865,13 @@ static void set_arm_wdt( void* arg )
 {
     struct Acq32Device* device = (struct Acq32Device*)arg;
     struct ArmWdtStruct* wdt = &device->m_dpd.set_arm;
-    
+
+    /* this item requeues itself, so it has to stop on its own */
+    if ( device->going_away ){
+	wdt->busy = 0;
+	return;
+    }
+
     if ( jiffies- wdt->last_poll_jiffies > WDT_POLL_JIFFIES ){
 	
 	acq32_devGetStatus( device, 0 );
@@ -2347,10 +2371,23 @@ static int acq32_printAuxReply( struct Acq32Path* path )
 {
     struct Acq32Device* device = path->device;
     unsigned mfa     = device->m_dpd.aux_mfa;
-    Message* message = (Message*)device->i2o_mfa2va(device, mfa);
-    char* printable  = message->payload.cdata;
-    int   len        = MIN( strlen( printable ), MESSAGE_LEN );
-  
+    Message* message;
+    char* printable;
+    int   len;
+
+    /* aux_mfa is 0 if the wait was interrupted before a reply arrived */
+    if ( mfa == 0 ){
+        return -EIO;
+    }
+    message = (Message*)device->i2o_mfa2va(device, mfa);
+    if ( message == NULL ){
+        /* not a frame of ours: do not hand it back to the board */
+        device->m_dpd.aux_mfa = 0;
+        return -EIO;
+    }
+    printable = message->payload.cdata;
+    len       = MIN( strlen( printable ), MESSAGE_LEN );
+
     acq32_path_readbuffer_put( path, printable, len );
 
     printable[len] = '\0';
@@ -2527,7 +2564,8 @@ static int acq32_SetEvent(
     switch ( ecd->ec ){
     case EC_TRIGGER_RISING:
     case EC_TRIGGER_FALLING:
-        a3 = ecd->prams.trigger_bit;    // fall thru
+        a3 = ecd->prams.trigger_bit;
+        fallthrough;
     default:
         command += BP_SET_FUNCODE(BP_GUT_SETEVENT)+BP_SET_A1(ecd->ec);
         break;
@@ -2657,7 +2695,8 @@ static int acq32_SetThreshold(
         distsel = BP_FC_SET_DATA_FAST_TRIGGER_MULTI;
         break;
     case THS_ALL:
-        channel = 'X';            // fall thru
+        channel = 'X';
+        fallthrough;
     default:
         ta = trigger_above;
         tb = trigger_below;
@@ -2939,7 +2978,7 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
 {
     int ibuf = 0;
     u32 mfa;
-    struct timeval tv_prev;
+    struct acq32_timeval tv_prev;
         
     PDEBUGL(3)(  " STARTS\n" );
 
@@ -2979,11 +3018,17 @@ ssize_t acq32_streaming_rowdev_read_workfunc( struct Acq32Device* device )
         if ( duff_mfa( device, mfa, "bh" ) ) continue;
 #endif
         { //XXXX (told you it was a hack!
-            Message* message = (Message*)phys_to_virt( mfa );
+            Message* message = (Message*)device->i2o_mfa2va( device, mfa );
+            u16 id, mylen;
+            u32 mtype;
 
-            u16 id    = message->header.id;
-            u16 mylen = message->header.length;
-            u32 mtype = message->header.type;
+            if ( message == NULL ){
+                device->m_dpd.i2o_packets_discarded++;
+                continue;
+            }
+            id    = message->header.id;
+            mylen = message->header.length;
+            mtype = message->header.type;
 
             if ( (id&MID_NOT_VALID) != 0 ){
 
@@ -3347,7 +3392,15 @@ void fetchDataReturnHandler(
                             ireq, this_response->start );
                     
                 path->return_samples += this_response->nsamples;
-                         
+
+                /* The card has finished writing this buffer: take it back
+                 * for the CPU, and so for userspace, which reads it
+                 * through its mmap.  A mapping below 4 GiB can still be
+                 * bounced, so this is needed whatever the address.  The
+                 * next fetch hands the buffer to the card again. */
+                acq32_dma_sync_for_cpu(
+                    path->device, requests[ireq].pci, 0, DMABUF_SIZE );
+
                 memset( &requests[ireq], 0, sizeof(HostRequestDataRecord) );
                 ++zeros;
                 not_accepted = 0;
@@ -3445,9 +3498,11 @@ static int _acq32_fetchDataToLocalBuffer(
     PDEBUGL(1)(  "ch %d buf %p ns %d start %d stride %d\n",
 		channel, buffer, nsamples, start, stride );
 
-    if ( mapping == NULL ){
+    if ( path->device->going_away ){
+        return -ENODEV;
+    }else if ( mapping == NULL ){
         return -EACQ32_NO_MAPPING;
-    }else if ( !IN_RANGE( vm_ubuf, 
+    }else if ( !IN_RANGE( vm_ubuf,
 			  mapping->vma->vm_start, 
 			  mapping->vma->vm_end ) ){
 	return -EACQ32_OUT_OF_MAPPING_RANGE;
@@ -3486,7 +3541,14 @@ static int _acq32_fetchDataToLocalBuffer(
             (end_of_message = ireq >= MESSAGE_HRDR_LEN       )     ); 
 	  ++ireq, ++ipbuf ){
               
-        requests[ireq].pci         = virt_to_bus( mapping->buffers[ipbuf] );
+        requests[ireq].pci         = mapping->bus[ipbuf];
+
+        /* Hand the buffer to the card.  Userspace writes to the mapped
+         * pages whenever it likes, so this is the point where whatever
+         * the CPU holds is made the device's. */
+        acq32_dma_sync_for_device(
+            path->device, mapping->bus[ipbuf], 0, DMABUF_SIZE );
+
         requests[ireq].start       = start;
         
         requests[ireq].nsamples    = MIN( nsamples-ntotal, 
@@ -3688,7 +3750,7 @@ extern int acq32_getBufferPhysicalAddr(
     for ( ireq = 0; 
           ireq != MAX_BUFFERS_IN_CHANNEL && mapping->buffers[ireq]; ++ireq ){
               
-        paddrs[ireq*2] = virt_to_bus( mapping->buffers[ireq] );
+        paddrs[ireq*2] = mapping->bus[ireq];
         paddrs[ireq*2+1] = DMABUF_SIZE;
             
         PDEBUGL(3)(  "[%d] bus:0x%08x len:0x%08x\n",
@@ -3708,8 +3770,12 @@ extern int acq32_getBufferPhysicalAddr(
  * so just copy to first base
  */
 //  copy_to_user( buffer, paddrs, (ireq*2+2)*sizeof(u32) );
+    acq32_dma_sync_for_cpu(
+        path->device, mapping->bus[0], 0, (ireq*2+2)*sizeof(u32) );
     memcpy( mapping->buffers[0], paddrs, (ireq*2+2)*sizeof(u32) );
-    
+    acq32_dma_sync_for_device(
+        path->device, mapping->bus[0], 0, (ireq*2+2)*sizeof(u32) );
+
     PDEBUGL(2)(  "Done - %d areas user %p len:%zu\n", 
                 ireq, buffer, (ireq*2+2)*sizeof(u32) );
     

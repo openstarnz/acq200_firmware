@@ -312,7 +312,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
@@ -917,9 +916,6 @@ static int do_GetInfo(
 #define NLUT (sizeof(_lut)/sizeof(struct KeyLut))
     
     enum StatusSelect selector;
-
-    
-    if ( acq32_simulate ) return iarg;
 
     selector = lkupKey( argv[iarg], _lut, NLUT );
     

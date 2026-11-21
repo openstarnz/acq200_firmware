@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 # acq32-mknod.pl - builds acq32 device nodes from proc info
 
+use FindBin qw($Bin);
+use lib $Bin;		# getBoards.pm lives beside this script; '.' is not in @INC on perl >= 5.26
 use getBoards;
 
 $REVID = '$Revision: 1.1.2.1 $';

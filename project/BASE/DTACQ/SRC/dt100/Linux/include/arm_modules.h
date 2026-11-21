@@ -38,4 +38,5 @@ struct image_header {
     unsigned char  Name[16]  ;
     unsigned int   Bootflags ; 
     unsigned char  Reserved[24] ;
-} typedef image_header_t ;
+} ;
+typedef struct image_header image_header_t ;

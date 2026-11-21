@@ -82,9 +82,9 @@ static struct {
 
 
 #ifdef PGMCOMOUT
-#define CHAN(file) CHANNEL((file)->f_dentry->d_inode->i_rdev)
+#define CHAN(file) CHANNEL(acq32_file_rdev(file))
 #else
-#define CHAN(file) ((file)->f_dentry->d_inode->i_rdev&0x00ff)
+#define CHAN(file) (acq32_file_rdev(file)&0x00ff)
 #endif
 
 static Message *build_hrd_message(
@@ -112,7 +112,7 @@ static Message *build_hrd_message(
 	}
 	message->header.length = 2*HRDR_SZ;
 
-	message->payload.hrdr[0].pci = pa;
+	message->payload.hrdr[0].pci = acq200_bigbuf_bus_addr( pa );
 	message->payload.hrdr[0].start = start;
 	message->payload.hrdr[0].nsamples = length;
 	message->payload.hrdr[0].stride = stride;
@@ -481,8 +481,8 @@ ssize_t acq200_bridge_read_generic (
 {
 	struct Acq32Device *device = DG(file)->acq32_device;
 	struct ReturnCommandHandler* rch;
-	struct IoMapping *kbuf = 
-		acq200_bb_pool_alloc(device, &rch, PCI_DMA_TODEVICE);
+	struct IoMapping *kbuf =
+		acq200_bb_pool_alloc(device, &rch, DMA_TO_DEVICE);
 	Message *message;
 
 	if (kbuf == 0){
@@ -599,7 +599,7 @@ int acq200_fetchDataToLocalBuffer(
 		struct ReturnCommandHandler* rch;
 		struct IoMapping *kbuf = 
 			acq200_bb_pool_alloc(path->device, &rch, 
-					     PCI_DMA_FROMDEVICE);
+					     DMA_FROM_DEVICE);
 		int ns = min(nsamples-ntotal, SAMPLES_PER_BUFFER(channel));
 		Message *message;
 		int rc;
@@ -674,7 +674,7 @@ ssize_t acq200_bridge_write_generic (
 	struct Acq32Device *device = DG(file)->acq32_device;
 	struct ReturnCommandHandler *rch;
 	struct IoMapping *kbuf = 
-		acq200_bb_pool_alloc(device, &rch, PCI_DMA_TODEVICE);
+		acq200_bb_pool_alloc(device, &rch, DMA_TO_DEVICE);
 	Message *message;
 
 	if (kbuf == 0) return -ETIMEDOUT;
@@ -718,12 +718,13 @@ static ssize_t acq200_bridge_write (
 
 extern int verify_ioctl( struct inode *inode, struct file *filp,
                          unsigned int cmd, unsigned long arg);
-extern int acq32_ioctl (struct inode *inode, struct file *filp,
-			unsigned int cmd, unsigned long arg);
+extern long acq32_unlocked_ioctl (struct file *filp,
+				  unsigned int cmd, unsigned long arg);
 
-int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg)
+long acq200_bridge_unlocked_ioctl (struct file *filp,
+                                   unsigned int cmd, unsigned long arg)
 {
+    struct inode *inode = acq32_file_inode( filp );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
     if ( rc != 0 ) return rc;
@@ -734,7 +735,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
                 
@@ -742,7 +743,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
                 
             return acq200_fetchDataToLocalBuffer( 
                 filp,
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 descr.buffer,
                 descr.nsamples,
                 descr.istart,
@@ -755,7 +756,7 @@ int acq200_bridge_ioctl (struct inode *inode, struct file *filp,
 	return -EINVAL;
 #endif /* PGMCOMOUT */
     default:
-        return acq32_ioctl( inode, filp, cmd, arg );
+        return acq32_unlocked_ioctl( filp, cmd, arg );
     }
 }
 
@@ -765,10 +766,11 @@ acq200_bridge_driver_init( struct DevGlob *dg )
 	static struct file_operations bridge_fops = {
 		.owner = THIS_MODULE,
 		.open = acq200_bridge_open,
+		.llseek = default_llseek,
 		.read = acq200_bridge_read,
 		.write = acq200_bridge_write,
 		.release = acq200_bridge_release,
-		.ioctl = acq200_bridge_ioctl,
+		.unlocked_ioctl = acq200_bridge_unlocked_ioctl,
 		.mmap = acq200_bridge_mmap
 	};
 	int rc;
@@ -987,7 +989,7 @@ static int acq32_makeIoMapping(
 		pim->pa, pim->len, pim->name );
 
 	if ( request_mem_region( pim->pa, pim->len, pim->name ) != 0 ){
-		pim->va = ioremap_nocache( pim->pa, pim->len );
+		pim->va = ioremap( pim->pa, pim->len );
 	}else{
 		dbg( 1, "request_mem_region( 0x%08lx, %d, %s ) failed\n",
 			    pim->pa, pim->len, pim->name );
@@ -1038,7 +1040,7 @@ static int acq200_coreDevInit(struct Acq32Device *device)
  * acq200 MUST use bigbuf as the dma target 
  */
 	device->dmabuf.va = device->bigbuf.bb.va;	
-	device->dmabuf.pa = device->bigbuf.bb.pa;
+	device->dmabuf.pa = acq200_bigbuf_bus_addr( device->bigbuf.bb.pa );
 	device->dmabuf.len = device->bigbuf.bb.len;
 
 	return rc;

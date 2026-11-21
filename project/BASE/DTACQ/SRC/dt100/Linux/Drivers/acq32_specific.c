@@ -43,7 +43,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
@@ -89,10 +88,10 @@ static int acq32_makeIoMapping(
 
     /* The whole device's BARs are already claimed via pci_request_regions()
      * in acq32_pci_probe(); just map this one. */
-    pim->va = ioremap_nocache( pim->pa, pim->len );
+    pim->va = ioremap( pim->pa, pim->len );
     if ( !pim->va ){
         dev_err(&device->p_pci->dev,
-                "ioremap_nocache 0x%08lx %d %s failed\n",
+                "ioremap 0x%08lx %d %s failed\n",
                 pim->pa, pim->len, pim->name);
         rc = -ENOMEM;
     }
@@ -332,9 +331,9 @@ static int acq32_map_target_pci( struct Acq32Device* device )
         device->rom.pa  = rom_pa & PCI_BASE_ADDRESS_MEM_MASK;
         device->rom.len = rom_len;
         dev_info(&device->p_pci->dev,
-                 "ROM ioremap: about to ioremap_nocache(0x%08lx, %d)\n",
+                 "ROM ioremap: about to ioremap(0x%08lx, %d)\n",
                  device->rom.pa, device->rom.len);
-        device->rom.va  = ioremap_nocache(device->rom.pa, device->rom.len);
+        device->rom.va  = ioremap(device->rom.pa, device->rom.len);
         if ( !device->rom.va ){
             dev_err(&device->p_pci->dev,
                     "ROM ioremap 0x%08lx %d FAILED — ROM reads disabled\n",
@@ -657,6 +656,7 @@ int acq32_coreDevInit( struct Acq32Device* device )
 // ctype.h macro valid for ASCII only (I guess we can live with that)
 
 
+#undef isprint
 #define isprint( cc )  ( IN_RANGE( cc, ' ', '~' ) )
 
 
@@ -991,8 +991,23 @@ static int acq32_getImagesDef(
 
 
 
+/*
+ * Hand a frame back to the card.  The CPU may have read it or written to it
+ * (an aux reply is terminated in place), so give it back to the device
+ * before the card is told it is free to fill it again.
+ */
 static void acq32_dev_i2o_return_mfa(struct Acq32Device* device, unsigned mfa)
 {
+	unsigned long flags;
+
+	/* the lock keeps the mapping from going while a frame is synced */
+	spin_lock_irqsave( &device->dmabuf.lock, flags );
+	if ( device->dmabuf.mapped && mfa_is_outbound_frame( device, mfa ) ){
+		acq32_dma_sync_for_device(
+			device, device->dmabuf.pa, mfa - device->dmabuf.pa,
+			device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
+	}
+	spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 	writel( mfa, CSR( device, PCI_I2O_OUTBOUND_FIFO ) );
 }
 
@@ -1005,8 +1020,34 @@ static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 
 static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 {
-	/* ACQ32 mfa's come with an id tag in top byte */
-	return (void*)phys_to_virt(mfa);
+	/*
+	 * An mfa is the bus address of one frame of the host message buffer.
+	 * Every mfa that gets here came through mfa_is_outbound_frame() in the
+	 * ISR, which compares all 32 bits, so there is no id tag in the top
+	 * byte to strip: a tagged mfa would have been dropped there.  Take
+	 * the offset into the buffer, never a bus address to pointer
+	 * conversion, as bus != physical behind an IOMMU.
+	 *
+	 * Not every caller got its mfa from the ISR queues (the aux reply is
+	 * read straight from aux_mfa, which is 0 when nothing arrived), so
+	 * apply the ISR's test again and return NULL for a non-frame.
+	 */
+	u32 offset = mfa - device->dmabuf.pa;
+	unsigned long flags;
+
+	/* the lock keeps the mapping from going while a frame is synced */
+	spin_lock_irqsave( &device->dmabuf.lock, flags );
+	if ( !device->dmabuf.mapped || !mfa_is_outbound_frame( device, mfa ) ){
+		spin_unlock_irqrestore( &device->dmabuf.lock, flags );
+		return NULL;
+	}
+
+	/* the card wrote this frame: make it visible to the CPU first */
+	acq32_dma_sync_for_cpu( device, device->dmabuf.pa, offset,
+				device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
+	spin_unlock_irqrestore( &device->dmabuf.lock, flags );
+
+	return (char*)device->dmabuf.va + offset;
 }
 
 

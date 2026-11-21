@@ -268,6 +268,8 @@ typedef unsigned char  u8;
 
 #ifdef __KERNEL__
 #include <linux/version.h>
+/* newer kernels define MIN/MAX here: they must be seen before the fallbacks below */
+#include <linux/kernel.h>
 
 #ifndef VERSION_CODE
 #  define VERSION_CODE(vers,rel,seq) ( ((vers)<<16) | ((rel)<<8) | (seq) )
@@ -312,8 +314,12 @@ typedef unsigned char  u8;
 #define CLAMP(xx,ll,rr)         ((xx) = (xx)<(ll)? (ll): (xx)>(rr)? (rr): (xx))
 #define SWAP(aa,bb,tt)  ( tt = aa, aa = bb, bb = tt )
 
+#ifndef MAX
 #define MAX(aa,bb)      ((aa)>=(bb)?(aa):(bb))
+#endif
+#ifndef MIN
 #define MIN(aa,bb)      ((aa)<=(bb)?(aa):(bb))
+#endif
 
 
 #define ABS(aa)                 ((aa)>=0?(aa):-(aa))

@@ -1,0 +1,16 @@
+# CentOS 6 (kernel 2.6.32-754) build image for the driver.
+# CentOS 6 is end of life, so the repos point at vault.centos.org.
+FROM centos:6
+
+RUN rm -f /etc/yum.repos.d/*.repo && \
+    printf '%s\n' \
+      '[base]' 'name=base' 'baseurl=http://vault.centos.org/6.10/os/$basearch/' \
+      'gpgcheck=0' 'enabled=1' \
+      '[updates]' 'name=updates' 'baseurl=http://vault.centos.org/6.10/updates/$basearch/' \
+      'gpgcheck=0' 'enabled=1' \
+      > /etc/yum.repos.d/vault.repo && \
+    yum install -y gcc make perl 'kernel-devel-2.6.32-754*' && \
+    yum clean all
+
+COPY build.sh /build.sh
+ENTRYPOINT ["/bin/sh", "/build.sh"]
