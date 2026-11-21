@@ -2303,6 +2303,9 @@ acq32_create_device(struct pci_dev* p_dev )
  
 	if ( device->major < 0) {
 	    printk(KERN_WARNING "acq32: can't get major %d\n", device->major );
+	    /* nothing else is set up: give the slot back */
+	    S_acq32.devices[--S_acq32.idev] = NULL;
+	    KFREE( device );
 	    return 0;
 	}
  
@@ -2599,11 +2602,15 @@ static int acq32_init_module(void)
             int idead;
             struct Acq32Device* device;
 
+            if ( !p_dev ){
+                return -ENOMEM;
+            }
             for ( idead = 0; idead < MAXDEAD; ++idead ){
                 ((unsigned*)p_dev)[idead] = 0xdeadbeef;
             }
             device = acq32_create_device( p_dev );
             if ( !device ){
+                KFREE( p_dev );
                 return -ENOMEM;
             }
             if ( allocateDmaBuffer( device ) ){
@@ -2630,6 +2637,61 @@ static void iterate_coreDevInit(void)
 	}
 }
 
+/* Undo a device that acq32_create_device() and the rest of its set up made. */
+static void acq32_destroy_device( struct Acq32Device* device )
+{
+    if ( acq32_simulate ){
+        acq32_sim_stop_clock( device );
+    }
+
+    unregister_chrdev( device->major, getDevName(device));
+
+    acq200_bb_pool_delete(device);
+    /* acq200 aliases ram.va to the bigbuf mapping; acq200_bb_free()
+     * unmaps it, so drop the alias or unmap_pci_memory() would iounmap
+     * the same cookie a second time. */
+    if ( device->bigbuf.bb.va && device->ram.va == device->bigbuf.bb.va ){
+        device->ram.va = NULL;
+    }
+    acq200_bb_free(&device->bigbuf.bb);
+    acq32_device_readbuffer_delete( device );
+
+    if ( !acq32_simulate && device->p_pci ){
+        unmap_pci_memory( device );
+#ifndef ACQ200
+        pci_dev_put( device->p_pci );
+#endif
+    }else if ( acq32_simulate && device->p_pci ){
+        /* simulate mode KMALLOC'd a fake pci_dev — free it. */
+        KFREE( device->p_pci );
+        device->p_pci = NULL;
+    }
+    if ( device->instrument_buf.buf ){
+        KFREE( device->instrument_buf.buf );
+    }
+
+#ifndef ACQ200
+    freeDmaBuffer( device );
+#endif
+    /* device->p_md points at a static struct returned by
+     * acq32_getDriver()/acq32_getSimul() — not heap memory.  The
+     * matching KFREE() in the 2.4 source was a latent bug; in 2.6
+     * it trips slub's BUG_ON for free-of-non-slab. */
+    KFREE(device);
+}
+
+#ifndef ACQ200
+/* Undo every device made so far, newest first, when module init fails. */
+static void acq32_destroy_all_devices( void )
+{
+    while ( S_acq32.idev > 0 ){
+        acq32_destroy_device( S_acq32.devices[S_acq32.idev-1] );
+        S_acq32.devices[--S_acq32.idev] = NULL;
+    }
+    S_acq32.ndevs = 0;
+}
+#endif
+
 static int acq32_driver_init(void)
 {
 	PDEBUG( "ACQ32 copyright (c) D-TACQ Solutions Ltd 2001\n"
@@ -2650,7 +2712,16 @@ static int acq32_driver_init(void)
 
 	acq200_bb_init( acq32_big_buf_base, acq32_big_buf_len, S_acq32.ndevs );
 #else
-	acq32_init_module();
+	{
+		int rc = acq32_init_module();
+
+		if ( rc ){
+			/* a failed load must leave no device, character
+			 * device or buffer behind */
+			acq32_destroy_all_devices();
+			return rc;
+		}
+	}
 #endif
 
 	if ( !acq32_simulate ){
@@ -2683,47 +2754,7 @@ static void acq32_driver_exit(void)
     /* use of idev is deliberate - include _all_ devices */
 
     for ( ii = 0; ii != S_acq32.ndevs; ii++){
-  
-        struct Acq32Device* device = S_acq32.devices[ii];
-
-        if ( acq32_simulate ){
-            acq32_sim_stop_clock( device );
-        }
-
-        unregister_chrdev( device->major, getDevName(device));
-
-        acq200_bb_pool_delete(device);
-	/* acq200 aliases ram.va to the bigbuf mapping; acq200_bb_free()
-	 * unmaps it, so drop the alias or unmap_pci_memory() would iounmap
-	 * the same cookie a second time. */
-	if ( device->bigbuf.bb.va && device->ram.va == device->bigbuf.bb.va ){
-		device->ram.va = NULL;
-	}
-	acq200_bb_free(&device->bigbuf.bb);
-        acq32_device_readbuffer_delete( device );
-        
-        if ( !acq32_simulate && device->p_pci ){
-            unmap_pci_memory( device );
-#ifndef ACQ200
-            pci_dev_put( device->p_pci );
-#endif
-        }else if ( acq32_simulate && device->p_pci ){
-            /* simulate mode KMALLOC'd a fake pci_dev — free it. */
-            KFREE( device->p_pci );
-            device->p_pci = NULL;
-        }
-        if ( device->instrument_buf.buf ){
-            KFREE( device->instrument_buf.buf );
-        }
-
-#ifndef ACQ200
-        freeDmaBuffer( device );
-#endif
-	/* device->p_md points at a static struct returned by
-	 * acq32_getDriver()/acq32_getSimul() — not heap memory.  The
-	 * matching KFREE() in the 2.4 source was a latent bug; in 2.6
-	 * it trips slub's BUG_ON for free-of-non-slab. */
-	KFREE(device);
+        acq32_destroy_device( S_acq32.devices[ii] );
     }
 
     /* and call the cleanup functions for friend devices */
