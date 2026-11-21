@@ -400,15 +400,19 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 {
 //#define FN "acq32_mmap_channel() "
     struct Acq32Path* path = PD(filp);
-    int imap = getFirstFreeMmapBuffer( path );
-    unsigned long vsize     = vma->vm_end - vma->vm_start;
+    int imap;
+    unsigned long vsize    = vma->vm_end - vma->vm_start;
     unsigned long allocated = 0;
     int ibuf;    
     ChannelMapping* cm;
     int rc = 0;
 
     PDEBUGL(2)( "vma:%p channel:%d\n", vma, CHANNEL( path->minor ) );
-    
+
+    if ( path->device->going_away ){
+        return -ENODEV;
+    }
+    imap = getFirstFreeMmapBuffer( path );
     if ( imap == -1 ){
         return -ENODEV;
     }

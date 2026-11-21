@@ -786,7 +786,14 @@ static int _acq32_devSendCommand(
     int rv;
     
     MUTEX_DOWN( &device->m_dpd.mbox_mutex );
-    
+
+    /* going_away is set under this mutex, so a command is either already
+     * complete or refused here */
+    if ( device->going_away ){
+        MUTEX_UP( &device->m_dpd.mbox_mutex );
+        return -ENODEV;
+    }
+
     command |= BP_CI_DONE+BP_CI_COMMAND;
 
     if ( a4 ){
@@ -846,6 +853,10 @@ int acq32_devSendCommand( struct Acq32Device* device, unsigned command )
 int acq32_setArmSpin( struct Acq32Device* device )
 {
     unsigned command = BP_SET_FUNCODE(BP_FC_SET_SPIN)|BP_CI_DONE|BP_CI_COMMAND;
+
+    if ( device->going_away ){
+        return -ENODEV;
+    }
     device->set_mailbox( device, BP_MB_COMMAND, command );
 
     // give acq32 poller plenty of time to respond
@@ -1405,9 +1416,13 @@ static Message* getMessageBuffer( struct Acq32Path* path )
 int acq32_sendI2O_kbuf( struct Acq32Path* path, Message* message )
 {
     struct Acq32Device* device = path->device;
-    unsigned mfa = readl( CSR( device, PCI_I2O_INBOUND_FIFO ) );
+    unsigned mfa;
 
-    
+    if ( device->going_away ){
+        return -ENODEV;
+    }
+    mfa = readl( CSR( device, PCI_I2O_INBOUND_FIFO ) );
+
     if ( mfa == PCI_I2O_INVALID_MFA ) {
         PDEBUG( "ERROR: no i2o buffers available" );
         return -EACQ32_NO_INCOMING_I2O;
@@ -1850,7 +1865,13 @@ static void set_arm_wdt( void* arg )
 {
     struct Acq32Device* device = (struct Acq32Device*)arg;
     struct ArmWdtStruct* wdt = &device->m_dpd.set_arm;
-    
+
+    /* this item requeues itself, so it has to stop on its own */
+    if ( device->going_away ){
+	wdt->busy = 0;
+	return;
+    }
+
     if ( jiffies- wdt->last_poll_jiffies > WDT_POLL_JIFFIES ){
 	
 	acq32_devGetStatus( device, 0 );
@@ -3477,9 +3498,11 @@ static int _acq32_fetchDataToLocalBuffer(
     PDEBUGL(1)(  "ch %d buf %p ns %d start %d stride %d\n",
 		channel, buffer, nsamples, start, stride );
 
-    if ( mapping == NULL ){
+    if ( path->device->going_away ){
+        return -ENODEV;
+    }else if ( mapping == NULL ){
         return -EACQ32_NO_MAPPING;
-    }else if ( !IN_RANGE( vm_ubuf, 
+    }else if ( !IN_RANGE( vm_ubuf,
 			  mapping->vma->vm_start, 
 			  mapping->vma->vm_end ) ){
 	return -EACQ32_OUT_OF_MAPPING_RANGE;

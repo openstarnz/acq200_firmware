@@ -756,10 +756,15 @@ struct Acq32Device {
 	    u32 pa;                  /* bus address, as the card sees it */
 	    size_t len;
 	    int mapped;              /* pa holds a live DMA API mapping */
+	    spinlock_t lock;         /* frame syncs vs unmapping: pa, len, mapped */
     }
     dmabuf;
 
     int simulated;                   /* p_pci is a fake: no DMA API */
+
+    /* set when the PCI device is unbound: no new command or fetch touches
+     * the card, and the host buffer mapping is gone */
+    int going_away;
 
     int vmas;                       // count of open vma's
 

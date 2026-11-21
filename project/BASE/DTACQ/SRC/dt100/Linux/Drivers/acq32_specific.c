@@ -998,11 +998,16 @@ static int acq32_getImagesDef(
  */
 static void acq32_dev_i2o_return_mfa(struct Acq32Device* device, unsigned mfa)
 {
-	if ( mfa_is_outbound_frame( device, mfa ) ){
+	unsigned long flags;
+
+	/* the lock keeps the mapping from going while a frame is synced */
+	spin_lock_irqsave( &device->dmabuf.lock, flags );
+	if ( device->dmabuf.mapped && mfa_is_outbound_frame( device, mfa ) ){
 		acq32_dma_sync_for_device(
 			device, device->dmabuf.pa, mfa - device->dmabuf.pa,
 			device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
 	}
+	spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 	writel( mfa, CSR( device, PCI_I2O_OUTBOUND_FIFO ) );
 }
 
@@ -1028,14 +1033,19 @@ static void* acq32_dev_i2o_mfa2va(struct Acq32Device *device, u32 mfa)
 	 * apply the ISR's test again and return NULL for a non-frame.
 	 */
 	u32 offset = mfa - device->dmabuf.pa;
+	unsigned long flags;
 
-	if ( !mfa_is_outbound_frame( device, mfa ) ){
+	/* the lock keeps the mapping from going while a frame is synced */
+	spin_lock_irqsave( &device->dmabuf.lock, flags );
+	if ( !device->dmabuf.mapped || !mfa_is_outbound_frame( device, mfa ) ){
+		spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 		return NULL;
 	}
 
 	/* the card wrote this frame: make it visible to the CPU first */
 	acq32_dma_sync_for_cpu( device, device->dmabuf.pa, offset,
 				device->dmabuf.len/ACQ32_OUTBOUND_FRAMES );
+	spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 
 	return (char*)device->dmabuf.va + offset;
 }

@@ -659,12 +659,17 @@ static int allocateDmaBuffer( struct Acq32Device* device )
  */
 static void unmapDmaBuffer( struct Acq32Device* device )
 {
+    unsigned long flags;
+
+    /* the lock excludes the frame syncs, which test mapped under it */
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
     if ( device->dmabuf.mapped ){
         acq32_dma_unmap( device, device->dmabuf.pa, device->dmabuf.len );
         device->dmabuf.mapped = 0;
         device->dmabuf.pa = 0;
         device->dmabuf.len = 0;
     }
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 }
 
 static void freeDmaBuffer( struct Acq32Device* device )
@@ -1385,9 +1390,10 @@ long acq32_unlocked_ioctl (struct file *filp,
     struct inode *inode = acq32_file_inode( filp );
     struct Acq32Device *dev = acq32_get_device( acq32_file_rdev( filp ) );
     int rc = verify_ioctl( inode, filp, cmd, arg );
-    
+
     if ( rc != 0 ) return rc;
-    
+    if ( dev && dev->going_away ) return -ENODEV;
+
     switch(cmd) {
     case ACQ32_IOCHARDRESET:
     {
@@ -1604,7 +1610,8 @@ int acq32_request_irq( struct Acq32Path* path )
  * if interrupts are requested globally, AND the board is wanting an interrupt,
  * ask Linux for the use thereof
  */
-        if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 ){
+        if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 &&
+             !device->going_away ){
 
             result = request_irq(
                 device->p_pci->irq,
@@ -1677,7 +1684,9 @@ int acq32_open( struct inode* inode, struct file* filp )
     int ierrno;
     int should_request_irq = 1;        // most node types should try it
 
-    if ( !acq32_device_exists( inode->i_rdev )  ){
+    struct Acq32Device* device = acq32_get_device( inode->i_rdev );
+
+    if ( device == NULL || device->going_away ){
         return -ENODEV;
     }
 
@@ -1881,12 +1890,15 @@ acq32_dmabuf_read (
     )
 {
     struct Acq32Device* device = PDEV(filp);
+    unsigned long flags;
 
     /* a snapshot of whatever the card has written so far: the CPU only
      * reads, so there is nothing to hand back to the device */
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
     if ( device->dmabuf.mapped ){
         acq32_dma_sync_for_cpu( device, device->dmabuf.pa, 0, DMABUF_SIZE );
     }
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
     return linear_buffer_read(
         filp, buf, count, (char*)device->dmabuf.va, DMABUF_SIZE );
 }
@@ -2302,6 +2314,7 @@ acq32_create_device(struct pci_dev* p_dev )
 	memcpy( &device->pci_stash, p_dev, sizeof(struct pci_dev));
  
 	device->simulated = acq32_simulate;
+	spin_lock_init( &device->dmabuf.lock );
 	device->p_md = acq32_simulate?
 	    acq32_getSimul(): acq32_getDriver();
  
@@ -2484,8 +2497,60 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
     }
     acq32_device_init( device );
 
+    /* The device struct and open files outlive an unbind, and a channel
+     * buffer is unmapped through p_pci when its vma goes: keep the pci_dev
+     * until cleanup_module(), whatever happens to the PCI device. */
+    pci_dev_get( p_dev );
     pci_set_drvdata( p_dev, device );
     return 0;
+}
+
+/* a work item that was never initialised has nothing to wait for */
+static void acq32_cancel_work( struct tq_struct* tq )
+{
+    if ( tq->work.func ){
+        cancel_work_sync( &tq->work );
+    }
+}
+
+/*
+ * Stop everything that can reach the host buffer mapping, in an order that
+ * lets each step finish.  New commands, fetches and opens are refused
+ * first; the card is then silenced, so it raises no interrupt and masters
+ * no more DMA; the interrupt is freed, which waits for a handler that is
+ * running; last, the work the handler queued is drained.  A client that
+ * still holds the device open finds every operation failing with -ENODEV,
+ * and its release finds no interrupt left to free.
+ */
+static void acq32_quiesce_device( struct pci_dev* p_dev,
+                                  struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+
+    /* setting the flag under the mailbox mutex waits out a command that
+     * is on its way to the card */
+    down( &dp->mbox_mutex );
+    device->going_away = 1;
+    up( &dp->mbox_mutex );
+
+    if ( device->csr.va ){
+        writel( NO_OUTBOUND_INTS, CSR( device, PCI_OUT_INT_MASK ) );
+    }
+    pci_clear_master( p_dev );
+
+    /* the same mutex serialises this with a first open requesting the
+     * interrupt, which tests going_away under it */
+    down( &dp->irq_req_mutex );
+    if ( device->use_interrupts ){
+        free_irq( p_dev->irq, device );
+        device->use_interrupts = 0;
+    }
+    up( &dp->irq_req_mutex );
+
+    acq32_cancel_work( &dp->isr_bh );
+    acq32_cancel_work( &dp->cos.task );
+    acq32_cancel_work( &dp->work_task );
+    acq32_cancel_work( &dp->set_arm.watchdog_task );
 }
 
 static void acq32_pci_remove( struct pci_dev* p_dev )
@@ -2496,12 +2561,13 @@ static void acq32_pci_remove( struct pci_dev* p_dev )
      * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
      * pci_release_regions() and pci_disable_device() pair the
      * matching calls in probe; the device struct itself is freed in
-     * cleanup_module.  The card is stopped mastering the bus first, then
-     * the host buffer mapping is undone; its pages are freed in
-     * cleanup_module. */
-    pci_clear_master( p_dev );
+     * cleanup_module.  The card is stopped first, then the host buffer
+     * mapping is undone; its pages are freed in cleanup_module. */
     if ( device ){
+        acq32_quiesce_device( p_dev, device );
         unmapDmaBuffer( device );
+    }else{
+        pci_clear_master( p_dev );
     }
     pci_release_regions( p_dev );
     pci_disable_device( p_dev );
@@ -2638,6 +2704,9 @@ static void acq32_driver_exit(void)
         
         if ( !acq32_simulate && device->p_pci ){
             unmap_pci_memory( device );
+#ifndef ACQ200
+            pci_dev_put( device->p_pci );
+#endif
         }else if ( acq32_simulate && device->p_pci ){
             /* simulate mode KMALLOC'd a fake pci_dev — free it. */
             KFREE( device->p_pci );
