@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 # wav-init.pl - initializes wavegen nodes
 
+use FindBin qw($Bin);
+use lib $Bin;		# getBoards.pm lives beside this script; '.' is not in @INC on perl >= 5.26
 use getBoards;
 
 $REVID = 'Revision:$';

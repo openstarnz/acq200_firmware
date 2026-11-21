@@ -29,7 +29,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 #include "acq32.h"
@@ -86,7 +85,13 @@ int acq200_bb_alloc( struct IoMapping *mapping, long length, char name[] )
 
 int acq200_bb_free(struct IoMapping* map)
 {
-	iounmap((void*)map->pa);
+	/* bigbuf is only mapped when acq32_big_buf_base is set; modern iounmap()
+	 * warns when handed NULL.  The ioremap() cookie is va, not the
+	 * physical address. */
+	if (map->va){
+		iounmap((void*)map->va);
+		map->va = NULL;
+	}
 	return 0;
 }
 

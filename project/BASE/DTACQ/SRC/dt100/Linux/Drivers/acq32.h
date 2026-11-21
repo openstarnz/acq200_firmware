@@ -422,7 +422,7 @@
 #ifndef _ACQ32_H_
 #define _ACQ32_H_
 
-
+#include "compat.h"
 
 
 /*
@@ -614,7 +614,7 @@ struct Acq32MasterDriver;
 typedef struct INSTRUMENT_BUF {
     int id;
     char ids[100];
-    struct timeval tv;
+    struct acq32_timeval tv;
 } 
 InstrumentBuf;
 
@@ -753,12 +753,24 @@ struct Acq32Device {
 
     struct DmaBuf {
 	    u32* va;
-	    u32 pa;
+	    u32 pa;                  /* bus address, as the card sees it */
 	    size_t len;
+	    int mapped;              /* pa holds a live DMA API mapping */
+	    spinlock_t lock;         /* frame syncs vs unmapping: pa, len, mapped */
     }
     dmabuf;
 
-    int vmas;                        // count of open vma's
+    int simulated;                   /* p_pci is a fake: no DMA API */
+
+    /* set when the PCI device is unbound: no new command or fetch touches
+     * the card, and the host buffer mapping is gone */
+    int going_away;
+
+    /* counts the times a removed device was bound again: a client from
+     * before a rebind holds no place in nclients any more */
+    int generation;
+
+    int vmas;                      // count of open vma's
 
     struct BigBuf {
 	    struct IoMapping bb;
@@ -852,7 +864,7 @@ struct Acq32Device {
 	    struct ReturnCommandHandler __first_handler;
 	struct ReturnCommandHandler* first_rch;
 	
-	struct timeval tv_last_streaming_message;
+	struct acq32_timeval tv_last_streaming_message;
 
 	unsigned streaming_message_delta_usecs;
 
@@ -978,6 +990,7 @@ typedef struct CHANNEL_MAPPING {
     struct vm_area_struct* vma;
     // device read buffer done
     char* buffers[MAX_BUFFERS_IN_CHANNEL];
+    u32 bus[MAX_BUFFERS_IN_CHANNEL];     // buffers[i] as the card sees it
 }
 ChannelMapping;	  
 /*
@@ -1003,6 +1016,7 @@ struct Acq32Path {
 
     short is_blocking; 
     short uses_irq;               // not all paths use irq
+    int generation;               // device->generation when counted in nclients
                    
 
     int nsamples;
@@ -1193,6 +1207,7 @@ extern struct Acq32MasterDriver* acq32_getSimul(void);
 
 void acq32_finish_with_engines( struct DriverPrivate* dp );
 void acq32_restart_timer_task( struct DriverPrivate* dp );
+void acq32_sim_stop_clock( struct Acq32Device* device );
 
 int acq32_getDeviceCount(void);
 
@@ -1243,7 +1258,7 @@ acq32_timestamp( struct Acq32Device* dev, int id, const char* fmt, ... );
         acq32_timestamp( dev, typ, str, ##args ); break; }
 
 extern unsigned acq32_getDeltaTime( 
-    struct timeval* tv_prev, struct timeval* tv_update );
+    struct acq32_timeval* tv_prev, struct acq32_timeval* tv_update );
 
 
 static inline int printfn( int n, const char *fn )
@@ -1556,6 +1571,28 @@ int acq200_bb_free(struct IoMapping* map);
 int acq32_genericCoreDevInit( struct Acq32Device* device );
 
 void acq32_incoming_i2o_isr( struct Acq32Device* device, u32 mfa );
+
+/*
+ * acq32_utils.c: bus addresses for the card.  The card is a 32 bit bus
+ * master, so every address it is given comes from the DMA API.  Simulated
+ * devices have no pci_dev: they get virt_to_phys() and nothing to undo.
+ */
+int acq32_dma_map( struct Acq32Device* device, void* va, size_t len, u32* bus );
+void acq32_dma_unmap( struct Acq32Device* device, u32 bus, size_t len );
+void acq32_dma_sync_for_cpu(
+	struct Acq32Device* device, u32 bus, size_t offset, size_t len );
+void acq32_dma_sync_for_device(
+	struct Acq32Device* device, u32 bus, size_t offset, size_t len );
+
+/*
+ * ACQ200 bigbuf is RAM hidden with mem=, outside the DMA API.  This turns
+ * its physical address into the card's address by assuming bus == physical,
+ * which only holds without an IOMMU.  Bigbuf paths cannot be IOMMU safe.
+ */
+static inline u32 acq200_bigbuf_bus_addr( unsigned long pa )
+{
+	return (u32)pa;
+}
 
 #define ACQ200_PCIWINSZ  0x01000000
 #define ACQ200_PCIWINMSK (ACQ200_PCIWINSZ-1)

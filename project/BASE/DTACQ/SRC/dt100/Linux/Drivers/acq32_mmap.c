@@ -115,7 +115,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 #define DEBUG_MALLOC
@@ -235,6 +234,7 @@ static void acq32_vma_release(struct vm_area_struct* vma )
             PDEBUG_MAPPING( 5, MAP_NR( cm->buffers[ibuf] ) );
             PDEBUG_MAPPING( 5, MAP_NR( cm->buffers[ibuf] )+1 );
 #endif
+            acq32_dma_unmap( device, cm->bus[ibuf], DMABUF_SIZE );
             FREE_PAGES((unsigned long)cm->buffers[ibuf], PAGE_ORDER);
         }
 
@@ -253,12 +253,14 @@ static void acq32_vma_release(struct vm_area_struct* vma )
  * is an access the mapping does not cover.  Without a fault handler the VM
  * would quietly back the address with an anonymous page.
  */
-static int acq32_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+static int acq32_vma_fault_impl(struct vm_area_struct *vma, unsigned long address)
 {
-	PDEBUGL(4)("%p 0x%08lx\n", vma, (unsigned long)vmf->virtual_address);
+	PDEBUGL(4)("%p 0x%08lx\n", vma, address);
 
 	return VM_FAULT_SIGBUS;
 }
+
+ACQ32_DEFINE_VMA_FAULT(acq32_vma_fault, acq32_vma_fault_impl)
 
 
 
@@ -360,23 +362,57 @@ int acq32_copyToChannelMap(
 }
 
 /*
+ * The buffers are mapped into userspace, which reads and writes the pages
+ * at any time, so no per-access syncing is possible or attempted.  The rule
+ * is that userspace's view is made the card's when a fetch hands a buffer
+ * to the card (acq32_dma_sync_for_device() when the request is built), and
+ * the card's view is made the CPU's, and so userspace's, when the reply
+ * returns it (acq32_dma_sync_for_cpu() in fetchDataReturnHandler()).
+ * Where the driver itself writes to a buffer it brackets the access with
+ * the same two calls.
+ */
+static void syncChannelMapForCpu( struct Acq32Device* device, ChannelMapping* cm )
+{
+    int ibuf;
+
+    for ( ibuf = 0; ibuf != MAX_BUFFERS_IN_CHANNEL && cm->buffers[ibuf];
+          ++ibuf ){
+        acq32_dma_sync_for_cpu( device, cm->bus[ibuf], 0, DMABUF_SIZE );
+    }
+}
+
+static void syncChannelMapForDevice( struct Acq32Device* device, ChannelMapping* cm )
+{
+    int ibuf;
+
+    for ( ibuf = 0; ibuf != MAX_BUFFERS_IN_CHANNEL && cm->buffers[ibuf];
+          ++ibuf ){
+        acq32_dma_sync_for_device( device, cm->bus[ibuf], 0, DMABUF_SIZE );
+    }
+}
+
+/*
  * acq32_mmap_channel() - this is the module entry point
  */
- 
+
 int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 // allocate a series of 128k buffers and map them into the vma
 {
 //#define FN "acq32_mmap_channel() "
     struct Acq32Path* path = PD(filp);
-    int imap = getFirstFreeMmapBuffer( path );
-    unsigned long vsize     = vma->vm_end - vma->vm_start;
+    int imap;
+    unsigned long vsize    = vma->vm_end - vma->vm_start;
     unsigned long allocated = 0;
     int ibuf;    
     ChannelMapping* cm;
     int rc = 0;
 
     PDEBUGL(2)( "vma:%p channel:%d\n", vma, CHANNEL( path->minor ) );
-    
+
+    if ( path->device->going_away ){
+        return -ENODEV;
+    }
+    imap = getFirstFreeMmapBuffer( path );
     if ( imap == -1 ){
         return -ENODEV;
     }
@@ -387,7 +423,7 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 #ifdef LINUX_NEW_PCI
     /* The buffers belong to this vma alone: a fork()ed copy would keep
      * mapping them after acq32_vma_release() has freed them. */
-    vma->vm_flags |= VM_DONTCOPY;
+    vm_flags_set( vma, VM_DONTCOPY );
 #endif
 
     for (ibuf=allocated=0; allocated<vsize; ++ibuf, allocated += DMABUF_SIZE) {
@@ -403,6 +439,13 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 
 	if ( cm->buffers[ibuf] == (void*)0 ){
 	    PDEBUG( "ERROR __get_free_pages() failed Should set ENOMEM\n" );
+	    rc = -ENOMEM;
+	    break;
+	}else if ( acq32_dma_map( path->device, cm->buffers[ibuf],
+				  DMABUF_SIZE, &cm->bus[ibuf] ) ){
+	    PDEBUG( "ERROR acq32_dma_map() failed\n" );
+	    FREE_PAGES( (unsigned long)cm->buffers[ibuf], PAGE_ORDER );
+	    cm->buffers[ibuf] = (void*)0;
 	    rc = -ENOMEM;
 	    break;
 	}else{
@@ -439,10 +482,12 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 	acq32_vma_release( vma );
     }else{
         if ( acq32_fill_vma ){
+            syncChannelMapForCpu( path->device, cm );
             testFill( cm, CHANNEL( path->minor ) );
-	}
-        if ( acq32_fill_vma > 1 ){
-            markPages( cm, vsize );
+            if ( acq32_fill_vma > 1 ){
+                markPages( cm, vsize );
+            }
+            syncChannelMapForDevice( path->device, cm );
 	}
     }
 

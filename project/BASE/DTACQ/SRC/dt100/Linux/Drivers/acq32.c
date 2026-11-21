@@ -475,7 +475,6 @@
 
 #include <asm/io.h>       /* ioremap()         */
 #include <asm/uaccess.h>  /* VERIFY_READ|WRITE */
-#include <asm/system.h>   /* cli(), *_flags */
 #include <asm/segment.h>  /* memcpy and such */
 
 
@@ -528,7 +527,7 @@ MODULE_PARM_DESC( name, descr );
 
 MODULE_AUTHOR("Peter.Milne@d-tacq.com");
 MODULE_DESCRIPTION("D-TACQ Solutions Ltd acq32pci/acq16pci/acq32cpci driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
             
 MPI( acq32_use_interrupts,   1, "enable/disable interrupts      (1)" );
 MPI( acq32_simulate,         0, "set to 1 to enable simulation  (0)" );
@@ -606,43 +605,78 @@ extern void acq32_globalIoreadFetchMutexUp(void)
 
 #ifndef ACQ200
 
-static void allocateDmaBuffer( struct Acq32Device* device )
+static int allocateDmaBuffer( struct Acq32Device* device )
 {
+    u32* va;
+    u32 pa;
+    int rc;
+
     /* GFP_DMA32 keeps the allocation below the 4 GiB line so the 32-bit
-     * DMA engine on the DEC 21285 can actually reach it.  Without this,
-     * the device DMA-truncates the address and we phys_to_virt() back
-     * to garbage — manifests as later slab corruption. */
+     * DMA engine on the DEC 21285 can actually reach it.  The pages are
+     * ours (they are mmapped to userspace), so the card's address for
+     * them comes from mapping them with the DMA API. */
     PDEBUGL(4)(  " calling __get_free_pages( GFP_KERNEL|GFP_DMA32, %d )\n",
                  PAGE_ORDER);
 
-    device->dmabuf.va =
-        (u32*)__get_free_pages( GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
+    va = (u32*)__get_free_pages( GFP_KERNEL | GFP_DMA32, PAGE_ORDER );
 
     PDEBUGL(4)(  " back\n" );
-    
-    ASSERT( device->dmabuf.va );
 
-    device->dmabuf.len = DMABUF_SIZE;
-
-    PDEBUGL(2)( "dmabuf vaddr %p\n", device->dmabuf.va );
-    device->dmabuf.pa = virt_to_phys( device->dmabuf.va );
-    PDEBUGL(2)( "dmabuf paddr 0x%08x\n", device->dmabuf.pa);
+    if ( !va ){
+        return -ENOMEM;
+    }
 
     {
         int ii;
 
         for ( ii = 0; ii != DMABUF_SIZE/4; ++ii ){
-            device->dmabuf.va[ii] = 0xdeadbeef;
+            va[ii] = 0xdeadbeef;
         }
     }
+
+    /* map after the CPU has filled it: the card owns the pages from here */
+    rc = acq32_dma_map( device, va, DMABUF_SIZE, &pa );
+    if ( rc ){
+        free_pages( (unsigned long)va, PAGE_ORDER );
+        return rc;
+    }
+
+    device->dmabuf.va = va;
+    device->dmabuf.pa = pa;
+    device->dmabuf.len = DMABUF_SIZE;
+    device->dmabuf.mapped = 1;
+
+    PDEBUGL(2)( "dmabuf vaddr %p\n", device->dmabuf.va );
+    PDEBUGL(2)( "dmabuf bus addr 0x%08x\n", device->dmabuf.pa);
+    return 0;
+}
+
+/*
+ * The card must have stopped mastering the bus before the mapping goes, the
+ * pages are freed after that.  Once unmapped the bus address is dead: clear
+ * it and the length so it is never sent to the card again and no MFA can
+ * match the buffer (mfa_is_outbound_frame() tests against len).
+ */
+static void unmapDmaBuffer( struct Acq32Device* device )
+{
+    unsigned long flags;
+
+    /* the lock excludes the frame syncs, which test mapped under it */
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
+    if ( device->dmabuf.mapped ){
+        acq32_dma_unmap( device, device->dmabuf.pa, device->dmabuf.len );
+        device->dmabuf.mapped = 0;
+        device->dmabuf.pa = 0;
+        device->dmabuf.len = 0;
+    }
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 }
 
 static void freeDmaBuffer( struct Acq32Device* device )
 {
-    /* Pre-existing bug: this used to pass dmabuf.len (a size) as the
-     * address to free_pages(), which panics on rmmod once free_pages
-     * actually walks the page tables.  Pass the virtual address. */
-    if ( device->dmabuf.len && device->dmabuf.va ){
+    unmapDmaBuffer( device );
+
+    if ( device->dmabuf.va ){
         free_pages( (unsigned long)device->dmabuf.va, PAGE_ORDER );
         device->dmabuf.va = NULL;
         device->dmabuf.len = 0;
@@ -697,7 +731,7 @@ int acq32_get_board( dev_t i_rdev )
 
 struct Acq32Device* acq32_get_device_from_filp( struct file* filp )
 {
-    return acq32_get_device(  filp->f_dentry->d_inode->i_rdev );
+    return acq32_get_device( acq32_file_rdev( filp ) );
 }
 
 struct Acq32Device* acq32_get_device_from_board( int board )
@@ -725,7 +759,7 @@ int acq32_get_board_from_device( struct Acq32Device* device )
  * Timestamping
  */
  
-static void normalize( struct timeval* tv )
+static void normalize( struct acq32_timeval* tv )
 {
     while ( tv->tv_usec > 1000000 ){
         tv->tv_usec -= 1000000;
@@ -734,11 +768,11 @@ static void normalize( struct timeval* tv )
 }
 int acq32_timestamp( struct Acq32Device* device, int id, const char* fmt, ... )
 {
-    struct timeval tv;
+    struct acq32_timeval tv;
     va_list ap;
     va_start( ap, fmt );
 
-    do_gettimeofday( &tv );
+    acq32_gettimeofday( &tv );
 
     if ( device->instrument_buf.cur-device->instrument_buf.buf < 
          acq32_instrument_buf_len ){
@@ -758,20 +792,20 @@ int acq32_timestamp( struct Acq32Device* device, int id, const char* fmt, ... )
 }
 
 unsigned acq32_getDeltaTime( 
-    struct timeval* tv_prev, 
-    struct timeval* tv_update 
-    ) 
+    struct acq32_timeval* tv_prev,
+    struct acq32_timeval* tv_update
+    )
 {
-    struct timeval tv_now;
+    struct acq32_timeval tv_now;
     unsigned delta_t;
 
-    do_gettimeofday( &tv_now );
+    acq32_gettimeofday( &tv_now );
 
     delta_t =  (tv_now.tv_sec - tv_prev->tv_sec)*1000000 +
         tv_now.tv_usec - tv_prev->tv_usec;
 
     if ( tv_update ){
-        memcpy( tv_update, &tv_now, sizeof(struct timeval) );
+        memcpy( tv_update, &tv_now, sizeof(struct acq32_timeval) );
     }
     return delta_t;
 }
@@ -1087,6 +1121,7 @@ int acq32_read_proc_bus(
 
 
 
+ACQ32_BUILD_STAMP_BEGIN
 int acq32_report_version( char *buf, int max_len )
 {
     int len = 0;
@@ -1104,6 +1139,7 @@ int acq32_report_version( char *buf, int max_len )
 
     return len;
 }
+ACQ32_BUILD_STAMP_END
 
 int acq32_debug_read_proc(
     char* buf, char** start, off_t offset,
@@ -1239,9 +1275,10 @@ int acq32_globs_read_proc(
  */
 
 static void delta_tv( 
-    struct timeval* diff, struct timeval* old, struct timeval* cur )
+    struct acq32_timeval* diff, struct acq32_timeval* old,
+    struct acq32_timeval* cur )
 {
-    struct timeval tnew;
+    struct acq32_timeval tnew;
 
     tnew = *cur;
 
@@ -1279,8 +1316,8 @@ int acq32_inst_read_proc(
    
         for ( iboard = 0; iboard != S_acq32.ndevs; ++iboard ){
 
-            struct timeval prev = {};
-            struct timeval cur;
+            struct acq32_timeval prev = {};
+            struct acq32_timeval cur;
             InstrumentBuf* ib;
             struct Acq32Device* device = acq32_get_device_from_board( iboard );
 
@@ -1338,23 +1375,25 @@ int verify_ioctl( struct inode *inode, struct file *filp,
      * the old verify_area which returned 0 on success).
      */
     if ((_IOC_DIR(cmd) & _IOC_READ) &&
-        !access_ok(VERIFY_WRITE, (void __user *)arg, size))
+        !acq32_access_ok(VERIFY_WRITE, (void __user *)arg, size))
         return -EINVAL;
     else if ((_IOC_DIR(cmd) & _IOC_WRITE) &&
-             !access_ok(VERIFY_READ, (void __user *)arg, size))
+             !acq32_access_ok(VERIFY_READ, (void __user *)arg, size))
         return -EINVAL;
     else
         return 0;
 }
                  
-int acq32_ioctl (struct inode *inode, struct file *filp,
-                 unsigned int cmd, unsigned long arg)
+long acq32_unlocked_ioctl (struct file *filp,
+                           unsigned int cmd, unsigned long arg)
 {
-    struct Acq32Device *dev = acq32_get_device( filp->f_dentry->d_inode->i_rdev );
+    struct inode *inode = acq32_file_inode( filp );
+    struct Acq32Device *dev = acq32_get_device( acq32_file_rdev( filp ) );
     int rc = verify_ioctl( inode, filp, cmd, arg );
-    
+
     if ( rc != 0 ) return rc;
-    
+    if ( dev && dev->going_away ) return -ENODEV;
+
     switch(cmd) {
     case ACQ32_IOCHARDRESET:
     {
@@ -1376,15 +1415,15 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
-                
+
             UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
-                
-            return dev->fetchDataToLocalBuffer( 
+
+            return dev->fetchDataToLocalBuffer(
                 filp,
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 descr.buffer,
                 descr.nsamples,
                 descr.istart,
@@ -1394,10 +1433,10 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
             return -EINVAL;
         }
     case ACQ32_IOREAD_GETPHYSICAL:
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
-            return acq32_getBufferPhysicalAddr( 
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
+            return acq32_getBufferPhysicalAddr(
                 PD(filp),
-                CHANNEL(filp->f_dentry->d_inode->i_rdev),
+                CHANNEL(acq32_file_rdev(filp)),
                 (void*)arg
                 );
         }else{
@@ -1494,9 +1533,10 @@ int acq32_ioctl (struct inode *inode, struct file *filp,
 }
 
 
-int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg)
+long acq32_rowdev_unlocked_ioctl (struct file *filp,
+                                  unsigned int cmd, unsigned long arg)
 {
+    struct inode *inode = acq32_file_inode( filp );
     int rc = verify_ioctl( inode, filp, cmd, arg );
     
     if ( rc != 0 ) return rc;
@@ -1506,13 +1546,13 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
         
         PDEBUGL(2)( "ioctl ACQ32_IOREAD_LOCALBUF\n" );
                         
-        if ( IN_RANGE( CHANNEL(filp->f_dentry->d_inode->i_rdev), 0, 31 ) ){
+        if ( IN_RANGE( CHANNEL(acq32_file_rdev(filp)), 0, 31 ) ){
 
             struct READ_LOCALBUF_DESCR descr;
-                
+
             UNCHECKED_COPY( copy_from_user( &descr, (void*)arg, sizeof(descr) ) );
-                
-            return acq32_fetchDataToLocalBuffer( 
+
+            return acq32_fetchDataToLocalBuffer(
                 filp,
                 ALLCHANNELS,
                 descr.buffer,
@@ -1524,7 +1564,7 @@ int acq32_rowdev_ioctl (struct inode *inode, struct file *filp,
             return -EINVAL;
         }
     default:
-        return acq32_ioctl( inode, filp, cmd, arg );
+        return acq32_unlocked_ioctl( filp, cmd, arg );
     }
 }
 
@@ -1570,7 +1610,8 @@ int acq32_request_irq( struct Acq32Path* path )
  * if interrupts are requested globally, AND the board is wanting an interrupt,
  * ask Linux for the use thereof
  */
-        if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 ){
+        if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 &&
+             !device->going_away ){
 
             result = request_irq(
                 device->p_pci->irq,
@@ -1581,6 +1622,15 @@ int acq32_request_irq( struct Acq32Path* path )
                 );
 
             device->use_interrupts = result==0;
+
+            /* acq32_quiesce_device() leaves the card's outbound
+             * interrupts masked, and a card keeps that state across a
+             * module reload or a rebind: enable them whenever a handler
+             * is installed.  A simulated board has no card to write. */
+            if ( device->use_interrupts && !device->simulated &&
+                 device->csr.va ){
+                writel( 0, CSR( device, PCI_OUT_INT_MASK ) );
+            }
         }
         rv = device->p_md->OnOpen && device->p_md->OnOpen( path );
     }
@@ -1593,6 +1643,7 @@ int acq32_request_irq( struct Acq32Path* path )
      * the next interrupt then jumped into freed module memory.
      */
     path->uses_irq = 1;
+    path->generation = device->generation;
 
     up( &device->m_dpd.irq_req_mutex );
 
@@ -1616,7 +1667,13 @@ int acq32_free_irq( struct Acq32Path* path )
     PDEBUGL(3)( "acq32_free_irq() nclients %d\n", device->nclients );
 
     down( &device->m_dpd.irq_req_mutex );
-    
+
+    /* a rebind restarted the client count without this path */
+    if ( path->generation != device->generation ){
+        up( &device->m_dpd.irq_req_mutex );
+        return 0;
+    }
+
     if ( --device->nclients == 0 ){
         int used_interrupts = device->use_interrupts != 0;
         rv = device->p_md->OnRelease && device->p_md->OnRelease( path ); 
@@ -1643,7 +1700,9 @@ int acq32_open( struct inode* inode, struct file* filp )
     int ierrno;
     int should_request_irq = 1;        // most node types should try it
 
-    if ( !acq32_device_exists( inode->i_rdev )  ){
+    struct Acq32Device* device = acq32_get_device( inode->i_rdev );
+
+    if ( device == NULL || device->going_away ){
         return -ENODEV;
     }
 
@@ -1846,8 +1905,18 @@ acq32_dmabuf_read (
     struct file* filp, char* buf, size_t count, loff_t* posp 
     )
 {
+    struct Acq32Device* device = PDEV(filp);
+    unsigned long flags;
+
+    /* a snapshot of whatever the card has written so far: the CPU only
+     * reads, so there is nothing to hand back to the device */
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
+    if ( device->dmabuf.mapped ){
+        acq32_dma_sync_for_cpu( device, device->dmabuf.pa, 0, DMABUF_SIZE );
+    }
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
     return linear_buffer_read(
-        filp, buf, count, (char*)PDEV(filp)->dmabuf.va, DMABUF_SIZE );
+        filp, buf, count, (char*)device->dmabuf.va, DMABUF_SIZE );
 }
 
 
@@ -1984,7 +2053,9 @@ int _acq200_mmap_host( struct file* filp, struct vm_area_struct* vma )
 	unsigned long off       = 0;
 	unsigned long vsize     = vma->vm_end - vma->vm_start;
 
-	unsigned long physical = dev->dmabuf.pa;
+	/* userspace is mapped by CPU physical address; dmabuf.pa is the
+	 * card's view of the same bigbuf RAM */
+	unsigned long physical = dev->bigbuf.bb.pa;
 
 	PDEBUGL(2)( "acq32_mmap(): start off:%ld physical:0x%08lx vsize:0x%lx",
 		    off, physical, vsize );
@@ -2038,124 +2109,140 @@ int acq32_mmap_host(struct file* filp, struct vm_area_struct* vma )
 static struct file_operations acq32_fops = {          // default ops
     .owner = THIS_MODULE,
 #ifndef ACQ200
-    llseek:  acq32_lseek,
-    read:    acq32_read,
+    .llseek  = acq32_lseek,
+    .read    = acq32_read,
 
-    mmap:    acq32_mmap,    // acq32_mmap
+    .mmap    = acq32_mmap,    // acq32_mmap
+#else
+    .llseek  = default_llseek,
 #endif
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    mmap:    acqXX_mmap_csr,
-    open:    acq32_open,
-    release: acq32_release,
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acqXX_mmap_csr,
+    .open    = acq32_open,
+    .release = acq32_release,
 };
 
 
 static struct file_operations acq32_AO_immediate_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_AO_immediate_write,
-    release:  acq32_release,
+    .llseek   = default_llseek,
+    .write    = acq32_AO_immediate_write,
+    .release  = acq32_release,
 };
 static struct file_operations acq32_AO_fungen_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_AO_function_write,
-    open:     acq32_AO_fungen_open,
-    release:  acq32_AO_fungen_release,
+    .llseek   = default_llseek,
+    .write    = acq32_AO_function_write,
+    .open     = acq32_AO_fungen_open,
+    .release  = acq32_AO_fungen_release,
 };
 
 static struct file_operations acq32_DO_immediate_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_DO_immediate_write,
-    release:  acq32_release,
+    .llseek   = default_llseek,
+    .write    = acq32_DO_immediate_write,
+    .release  = acq32_release,
 };
 
 static struct file_operations acq32_DO_fungen_fops = {
     .owner = THIS_MODULE,
-    write:    acq32_DO_function_write,
-    open:     acq32_DO_fungen_open,
-    release:  acq32_DO_fungen_release,
+    .llseek   = default_llseek,
+    .write    = acq32_DO_function_write,
+    .open     = acq32_DO_fungen_open,
+    .release  = acq32_DO_fungen_release,
 };
 
 
 static struct file_operations acq32_test_fops = {
     .owner = THIS_MODULE,
-    read:     acq32_test_read,
-    release:  acq32_release,
+    .llseek   = default_llseek,
+    .read     = acq32_test_read,
+    .release  = acq32_release,
 };
 #ifndef ACQ200
 static struct file_operations acq32_rom_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_rom_read,    // acq32_read
-    ioctl:   acq32_ioctl,       // acq32_ioctl
-    mmap:    acq32_mmap_rom,    // acq32_mmap
-    open:    acq32_rom_open,    // acq32_open
-    release: acq32_rom_release, // acq32_release
+    .llseek  = default_llseek,
+    .read    = acq32_rom_read,    // acq32_read
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_rom,    // acq32_mmap
+    .open    = acq32_rom_open,    // acq32_open
+    .release = acq32_rom_release, // acq32_release
 };
 #endif
 static struct file_operations acq32_dmabuf_fops = {
     .owner = THIS_MODULE,
+    .llseek  = default_llseek,
 #ifndef ACQ200
-    read:    acq32_dmabuf_read,    // acq32_read
+    .read    = acq32_dmabuf_read,    // acq32_read
 #endif
-    ioctl:   acq32_ioctl,          // acq32_ioctl
-    mmap:    acq32_mmap_bigphysmem,// acq32_mmap
-    release: acq32_release,
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_bigphysmem,// acq32_mmap
+    .release = acq32_release,
 };
 
 static struct file_operations acq32_hostbuf_fops = {
 	.owner = THIS_MODULE,
-	read: acq32_hostbuf_read,
-	mmap:    acq32_mmap_host,    // acq32_mmap
-	release: acq32_release,
+	.llseek = default_llseek,
+	.read = acq32_hostbuf_read,
+	.mmap    = acq32_mmap_host,    // acq32_mmap
+	.release = acq32_release,
 };
 
 static struct file_operations acq32_master_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_master_read,    // acq32_read
-    write:   acq32_master_write,   // acq32_write
-    ioctl:   acq32_ioctl,          // acq32_ioctl
-    open:    acq32_master_open,    // acq32_open
-    release: acq32_master_release, // acq32_release
+    .llseek  = default_llseek,
+    .read    = acq32_master_read,    // acq32_read
+    .write   = acq32_master_write,   // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .open    = acq32_master_open,    // acq32_open
+    .release = acq32_master_release, // acq32_release
 };
 
 static struct file_operations acq32_channel_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_channel_read,    // acq32_read
-    write:   acq32_data_write,      // acq32_write
-    ioctl:   acq32_ioctl,           // acq32_ioctl
-    mmap:    acq32_mmap_channel,    // acq32_mmap
-    release: acq32_release,         // acq32_release
+    .llseek  = default_llseek,
+    .read    = acq32_channel_read,    // acq32_read
+    .write   = acq32_data_write,      // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .mmap    = acq32_mmap_channel,    // acq32_mmap
+    .release = acq32_release,         // acq32_release
 };
 
 static struct file_operations acq32_rowdev_fops = {
     .owner = THIS_MODULE,
-    read:    acq32_row_read,        // acq32_read
-    write:   acq32_data_write,      // acq32_write
-    ioctl:   acq32_ioctl,           // acq32_ioctl
-    release: acq32_release,         // acq32_release
+    .llseek  = default_llseek,
+    .read    = acq32_row_read,        // acq32_read
+    .write   = acq32_data_write,      // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,         // acq32_release
 };
 
 static struct file_operations acq32_status_fops = {
     .owner = THIS_MODULE,
-    open:    acq32_status_open,
-    read:    acq32_status_read,
-    write:   acq32_status_write,
-    release: acq32_status_release,
+    .open    = acq32_status_open,
+    .llseek  = default_llseek,
+    .read    = acq32_status_read,
+    .write   = acq32_status_write,
+    .release = acq32_status_release,
 };
 static struct file_operations sim_channel_fops = {
     .owner = THIS_MODULE,
-    read:    sim_channel_read,    // acq32_read
-    write:   acq32_data_write,    // acq32_write
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    release: acq32_release,    // acq32_release
-    mmap:    acq32_mmap_channel,    // acq32_mmap
+    .llseek  = acq32_lseek,
+    .read    = sim_channel_read,    // acq32_read
+    .write   = acq32_data_write,    // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,    // acq32_release
+    .mmap    = acq32_mmap_channel,    // acq32_mmap
 };
 
 static struct file_operations sim_rowdev_fops = {
     .owner = THIS_MODULE,
-    read:    sim_rowdev_read,    // acq32_read
-    write:   acq32_data_write,    // acq32_write
-    ioctl:   acq32_ioctl,    // acq32_ioctl
-    release: acq32_release,    // acq32_release
+    .llseek  = acq32_lseek,
+    .read    = sim_rowdev_read,    // acq32_read
+    .write   = acq32_data_write,    // acq32_write
+    .unlocked_ioctl = acq32_unlocked_ioctl,
+    .release = acq32_release,    // acq32_release
 };
 
 
@@ -2232,6 +2319,9 @@ acq32_create_device(struct pci_dev* p_dev )
  
 	if ( device->major < 0) {
 	    printk(KERN_WARNING "acq32: can't get major %d\n", device->major );
+	    /* nothing else is set up: give the slot back */
+	    S_acq32.devices[--S_acq32.idev] = NULL;
+	    KFREE( device );
 	    return 0;
 	}
  
@@ -2242,6 +2332,8 @@ acq32_create_device(struct pci_dev* p_dev )
 	device->p_pci = p_dev;
 	memcpy( &device->pci_stash, p_dev, sizeof(struct pci_dev));
  
+	device->simulated = acq32_simulate;
+	spin_lock_init( &device->dmabuf.lock );
 	device->p_md = acq32_simulate?
 	    acq32_getSimul(): acq32_getDriver();
  
@@ -2266,9 +2358,9 @@ acq32_create_device(struct pci_dev* p_dev )
 	init_waitqueue_head( &device->m_dpd.waitq );
 	init_waitqueue_head( &device->m_dpd.aux_waitq );
  
-	init_MUTEX( &device->m_dpd.mbox_mutex );
-	init_MUTEX( &device->m_dpd.irq_req_mutex );
-	init_MUTEX( &device->m_dpd.ioread_fetch_mutex );
+	sema_init( &device->m_dpd.mbox_mutex, 1 );
+	sema_init( &device->m_dpd.irq_req_mutex, 1 );
+	sema_init( &device->m_dpd.ioread_fetch_mutex, 1 );
  
 	appbufInit( &device->appbuf );
 	streamBufInit( &device->streambuf );
@@ -2308,7 +2400,7 @@ void init_proc_entries(void)
 // register the /proc fs entries
 
 #define CPRE(name, entry ) \
-        create_proc_read_entry( name, 0, NULL, entry, 0)
+        acq32_create_proc_read_entry( name, entry )
 	CPRE(PROCFILENAME, acq32_read_proc);
 	CPRE(PROCFILENAME ".bus", acq32_read_proc_bus);
 	CPRE("." PROCFILENAME, acq32_debug_read_proc);
@@ -2349,6 +2441,71 @@ static void coreDevInit( struct Acq32Device *device )
  * pci_find_device() polling loop.
  */
 
+/* Undo acq32_create_device() for the device it just made, when setting
+ * the rest of it up fails.  Only the newest device can be dropped. */
+static void acq32_discard_device( struct Acq32Device* device )
+{
+    ASSERT( S_acq32.devices[S_acq32.idev-1] == device );
+
+    unregister_chrdev( device->major, getDevName(device) );
+    acq32_device_readbuffer_delete( device );
+    if ( device->instrument_buf.buf ){
+        KFREE( device->instrument_buf.buf );
+    }
+    S_acq32.devices[--S_acq32.idev] = NULL;
+    KFREE( device );
+}
+
+/* The device a card had before it was unbound.  It keeps its slot, its
+ * major and its card mappings until the module exits, so the device nodes
+ * made at load still name it. */
+static struct Acq32Device* acq32_find_removed_device( struct pci_dev* p_dev )
+{
+    int idev;
+
+    for ( idev = 0; idev != S_acq32.idev; ++idev ){
+        struct Acq32Device* device = S_acq32.devices[idev];
+
+        if ( device && device->p_pci == p_dev && device->going_away ){
+            return device;
+        }
+    }
+    return NULL;
+}
+
+/* Undo acq32_pci_remove() for a card that is bound again: only the host
+ * buffer mapping was given up, its pages are still there.  The first open
+ * after this installs the interrupt handler and tells the card the buffer's
+ * new address. */
+static int acq32_revive_device( struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+    unsigned long flags;
+    u32 pa;
+    int rc;
+
+    rc = acq32_dma_map( device, device->dmabuf.va, DMABUF_SIZE, &pa );
+    if ( rc ){
+        return rc;
+    }
+    spin_lock_irqsave( &device->dmabuf.lock, flags );
+    device->dmabuf.pa = pa;
+    device->dmabuf.len = DMABUF_SIZE;
+    device->dmabuf.mapped = 1;
+    spin_unlock_irqrestore( &device->dmabuf.lock, flags );
+
+    /* files left open across the remove no longer count as clients */
+    down( &dp->irq_req_mutex );
+    device->nclients = 0;
+    device->generation++;
+    up( &dp->irq_req_mutex );
+
+    down( &dp->mbox_mutex );
+    device->going_away = 0;
+    up( &dp->mbox_mutex );
+    return 0;
+}
+
 static int acq32_pci_probe( struct pci_dev* p_dev,
                             const struct pci_device_id* id )
 {
@@ -2383,18 +2540,26 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
     /* The DEC 21285 / ACQ32 hardware is a 32-bit DMA master.  Without
      * an explicit mask the kernel may hand us coherent buffers above
      * the 4 GiB line, which the device silently can't reach — leading
-     * to the device DMA-ing to truncated addresses and the driver
-     * then phys_to_virt()-ing the resulting MFA into random kernel
-     * memory.  Pin both the streaming and consistent masks at 32. */
-    rc = pci_set_dma_mask( p_dev, DMA_BIT_MASK(32) );
-    if ( !rc ){
-        rc = pci_set_consistent_dma_mask( p_dev, DMA_BIT_MASK(32) );
-    }
+     * to the device DMA-ing to truncated addresses.  Pin both the
+     * streaming and consistent masks at 32, before anything is mapped. */
+    rc = acq32_dma_set_mask_and_coherent( &p_dev->dev, DMA_BIT_MASK(32) );
     if ( rc ){
         dev_warn(&p_dev->dev,
                  "32-bit DMA mask not available (%d) — DMA may corrupt\n",
                  rc);
         /* Continue anyway; the warning will be in dmesg. */
+    }
+
+    device = acq32_find_removed_device( p_dev );
+    if ( device ){
+        rc = acq32_revive_device( device );
+        if ( rc ){
+            pci_release_regions( p_dev );
+            pci_disable_device( p_dev );
+            return rc;
+        }
+        pci_set_drvdata( p_dev, device );
+        return 0;
     }
 
     device = acq32_create_device( p_dev );
@@ -2404,20 +2569,87 @@ static int acq32_pci_probe( struct pci_dev* p_dev,
         return -ENOMEM;
     }
 
-    allocateDmaBuffer( device );
+    rc = allocateDmaBuffer( device );
+    if ( rc ){
+        acq32_discard_device( device );
+        pci_release_regions( p_dev );
+        pci_disable_device( p_dev );
+        return rc;
+    }
     acq32_device_init( device );
 
+    /* The device struct and open files outlive an unbind, and a channel
+     * buffer is unmapped through p_pci when its vma goes: keep the pci_dev
+     * until cleanup_module(), whatever happens to the PCI device. */
+    pci_dev_get( p_dev );
     pci_set_drvdata( p_dev, device );
     return 0;
 }
 
+/* a work item that was never initialised has nothing to wait for */
+static void acq32_cancel_work( struct tq_struct* tq )
+{
+    if ( tq->work.func ){
+        cancel_work_sync( &tq->work );
+    }
+}
+
+/*
+ * Stop everything that can reach the host buffer mapping, in an order that
+ * lets each step finish.  New commands, fetches and opens are refused
+ * first; the card is then silenced, so it raises no interrupt and masters
+ * no more DMA; the interrupt is freed, which waits for a handler that is
+ * running; last, the work the handler queued is drained.  A client that
+ * still holds the device open finds every operation failing with -ENODEV,
+ * and its release finds no interrupt left to free.
+ */
+static void acq32_quiesce_device( struct pci_dev* p_dev,
+                                  struct Acq32Device* device )
+{
+    struct DriverPrivate* dp = &device->m_dpd;
+
+    /* setting the flag under the mailbox mutex waits out a command that
+     * is on its way to the card */
+    down( &dp->mbox_mutex );
+    device->going_away = 1;
+    up( &dp->mbox_mutex );
+
+    if ( device->csr.va ){
+        writel( NO_OUTBOUND_INTS, CSR( device, PCI_OUT_INT_MASK ) );
+    }
+    pci_clear_master( p_dev );
+
+    /* the same mutex serialises this with a first open requesting the
+     * interrupt, which tests going_away under it */
+    down( &dp->irq_req_mutex );
+    if ( device->use_interrupts ){
+        free_irq( p_dev->irq, device );
+        device->use_interrupts = 0;
+    }
+    up( &dp->irq_req_mutex );
+
+    acq32_cancel_work( &dp->isr_bh );
+    acq32_cancel_work( &dp->cos.task );
+    acq32_cancel_work( &dp->work_task );
+    acq32_cancel_work( &dp->set_arm.watchdog_task );
+}
+
 static void acq32_pci_remove( struct pci_dev* p_dev )
 {
+    struct Acq32Device* device = pci_get_drvdata( p_dev );
+
     /* Per-device teardown is performed in cleanup_module() by walking
      * S_acq32.devices[] (preserves the original 2.4 cleanup ordering).
      * pci_release_regions() and pci_disable_device() pair the
      * matching calls in probe; the device struct itself is freed in
-     * cleanup_module. */
+     * cleanup_module.  The card is stopped first, then the host buffer
+     * mapping is undone; its pages are freed in cleanup_module. */
+    if ( device ){
+        acq32_quiesce_device( p_dev, device );
+        unmapDmaBuffer( device );
+    }else{
+        pci_clear_master( p_dev );
+    }
     pci_release_regions( p_dev );
     pci_disable_device( p_dev );
 }
@@ -2448,14 +2680,22 @@ static int acq32_init_module(void)
             int idead;
             struct Acq32Device* device;
 
+            if ( !p_dev ){
+                return -ENOMEM;
+            }
             for ( idead = 0; idead < MAXDEAD; ++idead ){
                 ((unsigned*)p_dev)[idead] = 0xdeadbeef;
             }
             device = acq32_create_device( p_dev );
             if ( !device ){
+                KFREE( p_dev );
                 return -ENOMEM;
             }
-            allocateDmaBuffer( device );
+            if ( allocateDmaBuffer( device ) ){
+                acq32_discard_device( device );
+                KFREE( p_dev );
+                return -ENOMEM;
+            }
             acq32_device_init( device );
         }
         S_acq32.ndevs = 4;
@@ -2475,7 +2715,62 @@ static void iterate_coreDevInit(void)
 	}
 }
 
-int init_module(void)
+/* Undo a device that acq32_create_device() and the rest of its set up made. */
+static void acq32_destroy_device( struct Acq32Device* device )
+{
+    if ( acq32_simulate ){
+        acq32_sim_stop_clock( device );
+    }
+
+    unregister_chrdev( device->major, getDevName(device));
+
+    acq200_bb_pool_delete(device);
+    /* acq200 aliases ram.va to the bigbuf mapping; acq200_bb_free()
+     * unmaps it, so drop the alias or unmap_pci_memory() would iounmap
+     * the same cookie a second time. */
+    if ( device->bigbuf.bb.va && device->ram.va == device->bigbuf.bb.va ){
+        device->ram.va = NULL;
+    }
+    acq200_bb_free(&device->bigbuf.bb);
+    acq32_device_readbuffer_delete( device );
+
+    if ( !acq32_simulate && device->p_pci ){
+        unmap_pci_memory( device );
+#ifndef ACQ200
+        pci_dev_put( device->p_pci );
+#endif
+    }else if ( acq32_simulate && device->p_pci ){
+        /* simulate mode KMALLOC'd a fake pci_dev — free it. */
+        KFREE( device->p_pci );
+        device->p_pci = NULL;
+    }
+    if ( device->instrument_buf.buf ){
+        KFREE( device->instrument_buf.buf );
+    }
+
+#ifndef ACQ200
+    freeDmaBuffer( device );
+#endif
+    /* device->p_md points at a static struct returned by
+     * acq32_getDriver()/acq32_getSimul() — not heap memory.  The
+     * matching KFREE() in the 2.4 source was a latent bug; in 2.6
+     * it trips slub's BUG_ON for free-of-non-slab. */
+    KFREE(device);
+}
+
+#ifndef ACQ200
+/* Undo every device made so far, newest first, when module init fails. */
+static void acq32_destroy_all_devices( void )
+{
+    while ( S_acq32.idev > 0 ){
+        acq32_destroy_device( S_acq32.devices[S_acq32.idev-1] );
+        S_acq32.devices[--S_acq32.idev] = NULL;
+    }
+    S_acq32.ndevs = 0;
+}
+#endif
+
+static int acq32_driver_init(void)
 {
 	PDEBUG( "ACQ32 copyright (c) D-TACQ Solutions Ltd 2001\n"
 		"ACQ200 copyright (c) D-TACQ Solutions Ltd 2003\n"
@@ -2483,7 +2778,7 @@ int init_module(void)
 
 	PDEBUGL(3)( "acq32busprot_rev %s\n", acq32_acq32busprot_rev );
 
-	init_MUTEX( &S_acq32.ioread_fetch_mutex );
+	sema_init( &S_acq32.ioread_fetch_mutex, 1 );
 #ifdef ACQ200
 	/* 
          * this assigns acq200 devices
@@ -2495,7 +2790,16 @@ int init_module(void)
 
 	acq200_bb_init( acq32_big_buf_base, acq32_big_buf_len, S_acq32.ndevs );
 #else
-	acq32_init_module();
+	{
+		int rc = acq32_init_module();
+
+		if ( rc ){
+			/* a failed load must leave no device, character
+			 * device or buffer behind */
+			acq32_destroy_all_devices();
+			return rc;
+		}
+	}
 #endif
 
 	if ( !acq32_simulate ){
@@ -2512,7 +2816,7 @@ int init_module(void)
 	return 0; /* succeed */
 }
 
-void cleanup_module(void)
+static void acq32_driver_exit(void)
 {
     int ii;
 
@@ -2528,35 +2832,11 @@ void cleanup_module(void)
     /* use of idev is deliberate - include _all_ devices */
 
     for ( ii = 0; ii != S_acq32.ndevs; ii++){
-  
-        struct Acq32Device* device = S_acq32.devices[ii];
-
-        unregister_chrdev( device->major, getDevName(device));
-
-        acq200_bb_pool_delete(device);
-	acq200_bb_free(&device->bigbuf.bb);
-        acq32_device_readbuffer_delete( device );
-        
-        if ( !acq32_simulate && device->p_pci ){
-            unmap_pci_memory( device );
-        }else if ( acq32_simulate && device->p_pci ){
-            /* simulate mode KMALLOC'd a fake pci_dev — free it. */
-            KFREE( device->p_pci );
-            device->p_pci = NULL;
-        }
-        if ( device->instrument_buf.buf ){
-            KFREE( device->instrument_buf.buf );
-        }
-
-#ifndef ACQ200
-        freeDmaBuffer( device );
-#endif
-	/* device->p_md points at a static struct returned by
-	 * acq32_getDriver()/acq32_getSimul() — not heap memory.  The
-	 * matching KFREE() in the 2.4 source was a latent bug; in 2.6
-	 * it trips slub's BUG_ON for free-of-non-slab. */
-	KFREE(device);
+        acq32_destroy_device( S_acq32.devices[ii] );
     }
 
     /* and call the cleanup functions for friend devices */
 }
+
+module_init(acq32_driver_init);
+module_exit(acq32_driver_exit);
