@@ -362,9 +362,39 @@ int acq32_copyToChannelMap(
 }
 
 /*
+ * The buffers are mapped into userspace, which reads and writes the pages
+ * at any time, so no per-access syncing is possible or attempted.  The rule
+ * is that userspace's view is made the card's when a fetch hands a buffer
+ * to the card (acq32_dma_sync_for_device() when the request is built), and
+ * the card's view is made the CPU's, and so userspace's, when the reply
+ * returns it (acq32_dma_sync_for_cpu() in fetchDataReturnHandler()).
+ * Where the driver itself writes to a buffer it brackets the access with
+ * the same two calls.
+ */
+static void syncChannelMapForCpu( struct Acq32Device* device, ChannelMapping* cm )
+{
+    int ibuf;
+
+    for ( ibuf = 0; ibuf != MAX_BUFFERS_IN_CHANNEL && cm->buffers[ibuf];
+          ++ibuf ){
+        acq32_dma_sync_for_cpu( device, cm->bus[ibuf], 0, DMABUF_SIZE );
+    }
+}
+
+static void syncChannelMapForDevice( struct Acq32Device* device, ChannelMapping* cm )
+{
+    int ibuf;
+
+    for ( ibuf = 0; ibuf != MAX_BUFFERS_IN_CHANNEL && cm->buffers[ibuf];
+          ++ibuf ){
+        acq32_dma_sync_for_device( device, cm->bus[ibuf], 0, DMABUF_SIZE );
+    }
+}
+
+/*
  * acq32_mmap_channel() - this is the module entry point
  */
- 
+
 int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 // allocate a series of 128k buffers and map them into the vma
 {
@@ -448,10 +478,12 @@ int acq32_mmap_channel( struct file* filp, struct vm_area_struct* vma )
 	acq32_vma_release( vma );
     }else{
         if ( acq32_fill_vma ){
+            syncChannelMapForCpu( path->device, cm );
             testFill( cm, CHANNEL( path->minor ) );
-	}
-        if ( acq32_fill_vma > 1 ){
-            markPages( cm, vsize );
+            if ( acq32_fill_vma > 1 ){
+                markPages( cm, vsize );
+            }
+            syncChannelMapForDevice( path->device, cm );
 	}
     }
 

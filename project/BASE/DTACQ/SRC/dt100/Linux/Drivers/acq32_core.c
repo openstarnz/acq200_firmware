@@ -3372,11 +3372,11 @@ void fetchDataReturnHandler(
                     
                 path->return_samples += this_response->nsamples;
 
-                /* The card has finished writing this buffer: make it
-                 * visible to the CPU before userspace reads it.  The
-                 * rest of the data path relies on the mapping not being
-                 * bounced (pages below 4 GiB, 32 bit mask), so there is
-                 * no matching sync back to the device. */
+                /* The card has finished writing this buffer: take it back
+                 * for the CPU, and so for userspace, which reads it
+                 * through its mmap.  A mapping below 4 GiB can still be
+                 * bounced, so this is needed whatever the address.  The
+                 * next fetch hands the buffer to the card again. */
                 acq32_dma_sync_for_cpu(
                     path->device, requests[ireq].pci, 0, DMABUF_SIZE );
 
@@ -3519,6 +3519,13 @@ static int _acq32_fetchDataToLocalBuffer(
 	  ++ireq, ++ipbuf ){
               
         requests[ireq].pci         = mapping->bus[ipbuf];
+
+        /* Hand the buffer to the card.  Userspace writes to the mapped
+         * pages whenever it likes, so this is the point where whatever
+         * the CPU holds is made the device's. */
+        acq32_dma_sync_for_device(
+            path->device, mapping->bus[ipbuf], 0, DMABUF_SIZE );
+
         requests[ireq].start       = start;
         
         requests[ireq].nsamples    = MIN( nsamples-ntotal, 
@@ -3740,8 +3747,12 @@ extern int acq32_getBufferPhysicalAddr(
  * so just copy to first base
  */
 //  copy_to_user( buffer, paddrs, (ireq*2+2)*sizeof(u32) );
+    acq32_dma_sync_for_cpu(
+        path->device, mapping->bus[0], 0, (ireq*2+2)*sizeof(u32) );
     memcpy( mapping->buffers[0], paddrs, (ireq*2+2)*sizeof(u32) );
-    
+    acq32_dma_sync_for_device(
+        path->device, mapping->bus[0], 0, (ireq*2+2)*sizeof(u32) );
+
     PDEBUGL(2)(  "Done - %d areas user %p len:%zu\n", 
                 ireq, buffer, (ireq*2+2)*sizeof(u32) );
     

@@ -1880,8 +1880,15 @@ acq32_dmabuf_read (
     struct file* filp, char* buf, size_t count, loff_t* posp 
     )
 {
+    struct Acq32Device* device = PDEV(filp);
+
+    /* a snapshot of whatever the card has written so far: the CPU only
+     * reads, so there is nothing to hand back to the device */
+    if ( device->dmabuf.mapped ){
+        acq32_dma_sync_for_cpu( device, device->dmabuf.pa, 0, DMABUF_SIZE );
+    }
     return linear_buffer_read(
-        filp, buf, count, (char*)PDEV(filp)->dmabuf.va, DMABUF_SIZE );
+        filp, buf, count, (char*)device->dmabuf.va, DMABUF_SIZE );
 }
 
 
