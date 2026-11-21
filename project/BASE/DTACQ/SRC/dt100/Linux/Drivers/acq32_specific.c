@@ -107,6 +107,7 @@ extern ssize_t linear_buffer_read(
     struct file *filp,
     char* buf,
     size_t count,
+    loff_t* posp,
     char* pkmem,
     int kmax
 	);
@@ -117,7 +118,7 @@ acq32_rom_read (
     )
 {
     return linear_buffer_read( 
-        filp, buf, count, (char*)PDEV(filp)->rom.va, ROM_SIZE );
+        filp, buf, count, posp, (char*)PDEV(filp)->rom.va, ROM_SIZE );
 
 }
 
@@ -125,7 +126,7 @@ ssize_t
 acq32_read ( struct file* filp, char* buf, size_t count, loff_t* posp )
 {
     return linear_buffer_read( 
-        filp, buf, count, (char*)PDEV(filp)->ram.va, RAM_SIZE );
+        filp, buf, count, posp, (char*)PDEV(filp)->ram.va, RAM_SIZE );
 }
 
 

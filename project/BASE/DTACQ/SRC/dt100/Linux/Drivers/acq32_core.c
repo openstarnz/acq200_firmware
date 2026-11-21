@@ -1181,6 +1181,10 @@ acq32_FetchDataFromDevice(
 
         nsamples = MIN( nsamples, cli_max_samples );
 
+        /* the client may have moved within the buffered span */
+        path->buffer.iget =
+            (start_sample - path->buffer.start_sample)*sample_size;
+
         PDEBUGL(4)( "acq32_FetchData - reusing buffer, ret %d\n", nsamples );
 
         return nsamples;
@@ -1209,6 +1213,12 @@ acq32_FetchDataFromDevice(
         }
     }
 
+    /* the fetch starts at the buffer's first sample, which may be before
+     * the client's */
+    nsamples = path->buffer.max_data/sample_size;
+    nsamples = MIN( nsamples, (is_pre_buffer? prelen: postlen) -
+                              path->buffer.start_sample );
+
     nsamples = acq32_devFetchData( 
         device, 
         path->buffer.start_sample,
@@ -1219,9 +1229,18 @@ acq32_FetchDataFromDevice(
 
     path->buffer.is_pre_buffer = is_pre_buffer;
 
+    if ( nsamples <= 0 ){
+        path->buffer.iput = 0;
+        return nsamples;
+    }
     path->buffer.iput = nsamples*sample_size;
 
     PDEBUGL(4)( "acq32_FetchData() returns %d\n", nsamples );    
+
+    /* only the samples from the client's position to the end of the
+     * buffer are there to be copied out */
+    nsamples = (path->buffer.iput - path->buffer.iget)/sample_size;
+    nsamples = MAX( nsamples, 0 );
 
     return MIN( nsamples, cli_max_samples );
 }
@@ -1296,6 +1315,10 @@ acq32_FetchDataFromHostBuffer(
         path->buffer.iput = nsamples*sample_size;           
         path->buffer.iget = 0;
 
+    }else{
+        /* the client may have moved within the buffered span */
+        path->buffer.iget =
+            (start_sample - path->buffer.start_sample)*sample_size;
     }
 
     PDEBUGL(4)( "acq32FetchDataHB() returns %d\n", 
@@ -2865,7 +2888,7 @@ ssize_t acq32_channel_read (
     int channel = CHANNEL( PD(filp)->minor );
     struct Acq32Path* path = PD(filp);
     int max_samples = count/sizeof(short);
-    unsigned long f_pos = (unsigned long)filp->f_pos;
+    unsigned long f_pos = (unsigned long)*posp;
     ssize_t tcount = 0;    
 
     // get the number of samples from cache or board is necessary 
@@ -2958,7 +2981,7 @@ ssize_t acq32_channel_read (
         }
     }
 
-    filp->f_pos = f_pos;
+    *posp = f_pos;
 
     PDEBUGL(3)( "acq32_channel_read returning %zd f_pos %ld\n", 
                 tcount, f_pos );
@@ -3169,7 +3192,7 @@ ssize_t acq32_row_read (
     int channel = 0xff;          // magic # PGMWORKTODO
     struct Acq32Path* path = PD(filp);
     int max_samples = count/sizeof(short)/ACQ32_MAX_CHANNELS;
-    unsigned long f_pos = (unsigned long)filp->f_pos;
+    unsigned long f_pos = (unsigned long)*posp;
     int nchannels_in_mask = acq32_devGetNumChannelsFromMask( PDEV(filp) );
     ssize_t tcount = 0;    
 
@@ -3272,7 +3295,7 @@ ssize_t acq32_row_read (
         }
     }
 
-    filp->f_pos = f_pos;
+    *posp = f_pos;
 
     PDEBUGL(3)( "acq32_row_read pos %ld returning %zd\n", f_pos, tcount );
 

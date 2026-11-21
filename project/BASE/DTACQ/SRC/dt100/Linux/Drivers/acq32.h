@@ -1605,6 +1605,7 @@ ssize_t linear_buffer_read(
     struct file *filp,
     char* buf,
     size_t count,
+    loff_t* posp,
     char* pkmem,
     int kmax
 	);

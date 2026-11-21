@@ -1870,11 +1870,12 @@ ssize_t linear_buffer_read(
     struct file *filp,
     char* buf,
     size_t count,
+    loff_t* posp,
     char* pkmem,
     int kmax
     )
 {
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
 
     if ( pkmem == NULL ){
         return 0;
@@ -1896,7 +1897,7 @@ ssize_t linear_buffer_read(
         }
     }
 
-    filp->f_pos += count;
+    *posp = f_pos + count;
     return count;
 }
 
@@ -1916,7 +1917,7 @@ acq32_dmabuf_read (
     }
     spin_unlock_irqrestore( &device->dmabuf.lock, flags );
     return linear_buffer_read(
-        filp, buf, count, (char*)device->dmabuf.va, DMABUF_SIZE );
+        filp, buf, count, posp, (char*)device->dmabuf.va, DMABUF_SIZE );
 }
 
 
