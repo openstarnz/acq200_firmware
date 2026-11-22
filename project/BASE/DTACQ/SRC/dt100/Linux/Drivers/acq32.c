@@ -1591,11 +1591,45 @@ static const char* getDevName(struct Acq32Device *device)
  *    specific_close - shall call acq32_close()
  */
 
+/* Install the interrupt handler for a device that has clients.  The caller
+ * holds irq_req_mutex. */
+static int acq32_install_irq( struct Acq32Device* device )
+{
+    int result = 0;
+
+/*
+ * if interrupts are requested globally, AND the board is wanting an interrupt,
+ * ask Linux for the use thereof
+ */
+    if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 &&
+         !device->going_away ){
+
+        result = request_irq(
+            device->p_pci->irq,
+            device->isr,
+            IRQF_SHARED,
+            getDevName(device),
+            device
+            );
+
+        device->use_interrupts = result==0;
+
+        /* acq32_quiesce_device() leaves the card's outbound
+         * interrupts masked, and a card keeps that state across a
+         * module reload or a rebind: enable them whenever a handler
+         * is installed.  A simulated board has no card to write. */
+        if ( device->use_interrupts && !device->simulated &&
+             device->csr.va ){
+            writel( 0, CSR( device, PCI_OUT_INT_MASK ) );
+        }
+    }
+    return result;
+}
+
 int acq32_request_irq( struct Acq32Path* path )
 {
 
     struct Acq32Device* device = path->device; 
-    const char* isr_name = getDevName(device);
     int rv = 0;
     int result = 0;
     
@@ -1606,32 +1640,7 @@ int acq32_request_irq( struct Acq32Path* path )
     down( &device->m_dpd.irq_req_mutex );
 
     if ( ++device->nclients == 1 ){
-/*
- * if interrupts are requested globally, AND the board is wanting an interrupt,
- * ask Linux for the use thereof
- */
-        if ( acq32_use_interrupts != 0 && device->p_pci->irq != 0 &&
-             !device->going_away ){
-
-            result = request_irq(
-                device->p_pci->irq,
-                device->isr,
-                IRQF_SHARED,
-                isr_name,
-                device
-                );
-
-            device->use_interrupts = result==0;
-
-            /* acq32_quiesce_device() leaves the card's outbound
-             * interrupts masked, and a card keeps that state across a
-             * module reload or a rebind: enable them whenever a handler
-             * is installed.  A simulated board has no card to write. */
-            if ( device->use_interrupts && !device->simulated &&
-                 device->csr.va ){
-                writel( 0, CSR( device, PCI_OUT_INT_MASK ) );
-            }
-        }
+        result = acq32_install_irq( device );
         rv = device->p_md->OnOpen && device->p_md->OnOpen( path );
     }
 
@@ -1643,7 +1652,6 @@ int acq32_request_irq( struct Acq32Path* path )
      * the next interrupt then jumped into freed module memory.
      */
     path->uses_irq = 1;
-    path->generation = device->generation;
 
     up( &device->m_dpd.irq_req_mutex );
 
@@ -1667,12 +1675,6 @@ int acq32_free_irq( struct Acq32Path* path )
     PDEBUGL(3)( "acq32_free_irq() nclients %d\n", device->nclients );
 
     down( &device->m_dpd.irq_req_mutex );
-
-    /* a rebind restarted the client count without this path */
-    if ( path->generation != device->generation ){
-        up( &device->m_dpd.irq_req_mutex );
-        return 0;
-    }
 
     if ( --device->nclients == 0 ){
         int used_interrupts = device->use_interrupts != 0;
@@ -1870,11 +1872,12 @@ ssize_t linear_buffer_read(
     struct file *filp,
     char* buf,
     size_t count,
+    loff_t* posp,
     char* pkmem,
     int kmax
     )
 {
-    unsigned long f_pos = (unsigned long)(filp->f_pos);
+    unsigned long f_pos = (unsigned long)*posp;
 
     if ( pkmem == NULL ){
         return 0;
@@ -1896,7 +1899,7 @@ ssize_t linear_buffer_read(
         }
     }
 
-    filp->f_pos += count;
+    *posp = f_pos + count;
     return count;
 }
 
@@ -1916,7 +1919,7 @@ acq32_dmabuf_read (
     }
     spin_unlock_irqrestore( &device->dmabuf.lock, flags );
     return linear_buffer_read(
-        filp, buf, count, (char*)device->dmabuf.va, DMABUF_SIZE );
+        filp, buf, count, posp, (char*)device->dmabuf.va, DMABUF_SIZE );
 }
 
 
@@ -2474,18 +2477,28 @@ static struct Acq32Device* acq32_find_removed_device( struct pci_dev* p_dev )
 }
 
 /* Undo acq32_pci_remove() for a card that is bound again: only the host
- * buffer mapping was given up, its pages are still there.  The first open
- * after this installs the interrupt handler and tells the card the buffer's
- * new address. */
+ * buffer mapping was given up, its pages are still there.  Files left open
+ * across the remove are still its clients: for them the interrupt handler
+ * is installed again and the card is told the buffer's new address, as on
+ * a first open.  With no client, the first open does that. */
 static int acq32_revive_device( struct Acq32Device* device )
 {
     struct DriverPrivate* dp = &device->m_dpd;
+    struct Acq32Path* path;
     unsigned long flags;
     u32 pa;
     int rc;
 
+    /* the first-open setup needs a path; get it while the bind can still
+     * fail with nothing to undo */
+    path = acq32_makePathDescriptor( 0, device );
+    if ( !path ){
+        return -ENOMEM;
+    }
+
     rc = acq32_dma_map( device, device->dmabuf.va, DMABUF_SIZE, &pa );
     if ( rc ){
+        acq32_freePathDescriptor( path );
         return rc;
     }
     spin_lock_irqsave( &device->dmabuf.lock, flags );
@@ -2494,15 +2507,23 @@ static int acq32_revive_device( struct Acq32Device* device )
     device->dmabuf.mapped = 1;
     spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 
-    /* files left open across the remove no longer count as clients */
+    /* opens are let in under irq_req_mutex, so a first open cannot install
+     * the handler between the flag clearing and the test of nclients */
     down( &dp->irq_req_mutex );
-    device->nclients = 0;
-    device->generation++;
-    up( &dp->irq_req_mutex );
 
     down( &dp->mbox_mutex );
     device->going_away = 0;
     up( &dp->mbox_mutex );
+
+    if ( device->nclients > 0 ){
+        acq32_install_irq( device );
+        if ( device->p_md->OnOpen ){
+            device->p_md->OnOpen( path );
+        }
+    }
+    up( &dp->irq_req_mutex );
+
+    acq32_freePathDescriptor( path );
     return 0;
 }
 
