@@ -2484,12 +2484,21 @@ static struct Acq32Device* acq32_find_removed_device( struct pci_dev* p_dev )
 static int acq32_revive_device( struct Acq32Device* device )
 {
     struct DriverPrivate* dp = &device->m_dpd;
+    struct Acq32Path* path;
     unsigned long flags;
     u32 pa;
     int rc;
 
+    /* the first-open setup needs a path; get it while the bind can still
+     * fail with nothing to undo */
+    path = acq32_makePathDescriptor( 0, device );
+    if ( !path ){
+        return -ENOMEM;
+    }
+
     rc = acq32_dma_map( device, device->dmabuf.va, DMABUF_SIZE, &pa );
     if ( rc ){
+        acq32_freePathDescriptor( path );
         return rc;
     }
     spin_lock_irqsave( &device->dmabuf.lock, flags );
@@ -2498,24 +2507,23 @@ static int acq32_revive_device( struct Acq32Device* device )
     device->dmabuf.mapped = 1;
     spin_unlock_irqrestore( &device->dmabuf.lock, flags );
 
+    /* opens are let in under irq_req_mutex, so a first open cannot install
+     * the handler between the flag clearing and the test of nclients */
+    down( &dp->irq_req_mutex );
+
     down( &dp->mbox_mutex );
     device->going_away = 0;
     up( &dp->mbox_mutex );
 
-    down( &dp->irq_req_mutex );
     if ( device->nclients > 0 ){
-        struct Acq32Path* path =
-            acq32_makePathDescriptor( 0, device );
-
         acq32_install_irq( device );
-        if ( path ){
-            if ( device->p_md->OnOpen ){
-                device->p_md->OnOpen( path );
-            }
-            acq32_freePathDescriptor( path );
+        if ( device->p_md->OnOpen ){
+            device->p_md->OnOpen( path );
         }
     }
     up( &dp->irq_req_mutex );
+
+    acq32_freePathDescriptor( path );
     return 0;
 }
 
